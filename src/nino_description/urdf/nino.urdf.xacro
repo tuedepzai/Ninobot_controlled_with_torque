@@ -1,0 +1,260 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="nino">
+  <xacro:arg
+    name="controllers_file"
+    default="$(find nino_control)/config/controllers.yaml"/>
+
+  <!-- Dimensions measured from the supplied SolidWorks STL export. -->
+  <xacro:property name="drive_wheel_radius" value="0.0625"/>
+  <xacro:property name="drive_wheel_width" value="0.047"/>
+  <xacro:property name="drive_wheel_joint_y" value="0.1935"/>
+  <!-- Contact-centre separation: 2 * (0.1935 - 0.02213167). -->
+  <xacro:property name="drive_wheel_separation" value="0.34273666"/>
+  <xacro:property name="caster_radius" value="0.016"/>
+  <xacro:property name="caster_width" value="0.021"/>
+
+  <material name="chassis_blue">
+    <color rgba="0.18 0.42 0.80 1.0"/>
+  </material>
+  <material name="wheel_black">
+    <color rgba="0.05 0.05 0.05 1.0"/>
+  </material>
+  <material name="metal_grey">
+    <color rgba="0.48 0.50 0.52 1.0"/>
+  </material>
+
+  <!--
+    The model is spawned at world (0, 0, 0).  base_footprint lies on the
+    ground; this fixed offset places the drive-wheel centres one radius above
+    it, avoiding the common "spawn below the floor" workaround.
+  -->
+  <link name="base_footprint"/>
+
+  <link name="base_link">
+    <inertial>
+      <!-- CAD mass and moments; lateral COM and lateral cross-products are
+           made exactly symmetric so equal wheel commands produce straight travel. -->
+      <origin xyz="0.0592774512 0 0.0848297985" rpy="0 0 0"/>
+      <mass value="3.6594075244"/>
+      <inertia
+        ixx="0.0286794731" ixy="0" ixz="-0.00039888648"
+        iyy="0.0473970329" iyz="0"
+        izz="0.0716779090"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://nino_description/meshes/base_link.STL"/>
+      </geometry>
+      <material name="chassis_blue"/>
+    </visual>
+    <!-- A primitive collision shape is smoother and more deterministic than
+         the 61k-triangle visual mesh while retaining the measured envelope. -->
+    <collision>
+      <origin xyz="0.06 0 0.05" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.48 0.34 0.14"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${drive_wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:macro name="drive_wheel" params="side y mesh com_z collision_z">
+    <link name="${side}_wheel_link">
+      <inertial>
+        <origin xyz="0 0 ${com_z}" rpy="0 0 0"/>
+        <mass value="0.4194392311"/>
+        <inertia
+          ixx="0.00043046655" ixy="0" ixz="0"
+          iyy="0.00043046655" iyz="0"
+          izz="0.00076090197"/>
+      </inertial>
+      <visual>
+        <geometry>
+          <mesh filename="package://nino_description/meshes/${mesh}"/>
+        </geometry>
+        <material name="wheel_black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${collision_z}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${drive_wheel_radius}" length="${drive_wheel_width}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${side}_wheel_joint" type="continuous">
+      <origin xyz="0 ${y} 0" rpy="${pi / 2} 0 0"/>
+      <parent link="base_link"/>
+      <child link="${side}_wheel_link"/>
+      <!-- -Z in the rotated joint frame is +Y in the robot frame. -->
+      <axis xyz="0 0 -1"/>
+      <!-- 24 rad/s is the emergency joint limit.  The effort controller uses
+           a 12 rad/s software limit, leaving transient feedback margin. -->
+      <limit effort="12.0" velocity="24.0"/>
+      <dynamics damping="0.02" friction="0.0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:drive_wheel
+    side="left" y="${drive_wheel_joint_y}"
+    mesh="left_wheel_link.STL" com_z="0.0221316704" collision_z="0.0235"/>
+  <xacro:drive_wheel
+    side="right" y="${-drive_wheel_joint_y}"
+    mesh="right_wheel_link.STL" com_z="-0.0221316704" collision_z="-0.0235"/>
+
+  <xacro:macro name="caster" params="index y">
+    <link name="caster_bracket_${index}_link">
+      <inertial>
+        <origin xyz="-0.0016273079 0 -0.0041294433" rpy="0 0 0"/>
+        <mass value="0.0821604275"/>
+        <inertia
+          ixx="0.00001115258" ixy="0" ixz="-0.00000082020"
+          iyy="0.00001170793" iyz="0"
+          izz="0.00001777544"/>
+      </inertial>
+      <visual>
+        <geometry>
+          <mesh filename="package://nino_description/meshes/caster_bracket_front1.STL"/>
+        </geometry>
+        <material name="metal_grey"/>
+      </visual>
+      <collision>
+        <geometry>
+          <!-- Use the same geometry and frame as the visual.  The previous
+               solid cylinder filled the open caster fork and extended into
+               the cable before the caster wheel reached it. -->
+          <mesh filename="package://nino_description/meshes/caster_bracket_front1.STL"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="caster_${index}_swivel_joint" type="continuous">
+      <origin xyz="0.24362 ${y} -0.0215" rpy="0 0 0"/>
+      <parent link="base_link"/>
+      <child link="caster_bracket_${index}_link"/>
+      <axis xyz="0 0 1"/>
+      <limit effort="2.0" velocity="20.0"/>
+      <dynamics damping="0.08" friction="0.01"/>
+    </joint>
+
+    <link name="caster_${index}_wheel_link">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="0.0131302038"/>
+        <inertia
+          ixx="0.00000131770" ixy="0" ixz="0"
+          iyy="0.00000131770" iyz="0"
+          izz="0.00000189555"/>
+      </inertial>
+      <visual>
+        <geometry>
+          <!-- The supplied front2 STL is empty, so both identical caster
+               assemblies intentionally use the valid front1 wheel mesh. -->
+          <mesh filename="package://nino_description/meshes/caster_wheel_front.STL"/>
+        </geometry>
+        <material name="wheel_black"/>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="${caster_radius}" length="${caster_width}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="caster_${index}_wheel_joint" type="continuous">
+      <origin xyz="-0.016 0 -0.025" rpy="${pi / 2} 0 0"/>
+      <parent link="caster_bracket_${index}_link"/>
+      <child link="caster_${index}_wheel_link"/>
+      <axis xyz="0 0 -1"/>
+      <limit effort="1.0" velocity="30.0"/>
+      <dynamics damping="0.01" friction="0.0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:caster index="left" y="0.088"/>
+  <xacro:caster index="right" y="-0.088"/>
+
+  <!-- Identical contact parameters on the left and right prevent artificial
+       yaw.  Caster friction is lower so the swivels align without scrubbing. -->
+  <gazebo reference="left_wheel_link">
+    <mu1>1.2</mu1>
+    <mu2>1.2</mu2>
+    <kp>1000000</kp>
+    <kd>10</kd>
+  </gazebo>
+  <gazebo reference="right_wheel_link">
+    <mu1>1.2</mu1>
+    <mu2>1.2</mu2>
+    <kp>1000000</kp>
+    <kd>10</kd>
+  </gazebo>
+  <gazebo reference="caster_left_wheel_link">
+    <mu1>0.35</mu1>
+    <mu2>0.35</mu2>
+  </gazebo>
+  <gazebo reference="caster_right_wheel_link">
+    <mu1>0.35</mu1>
+    <mu2>0.35</mu2>
+  </gazebo>
+
+  <!--
+    Gazebo exposes actual wheel torque command interfaces. Position and
+    velocity feedback are measured states, not ideal velocity actuators.
+    The +/-12 N.m limits match the wheel-joint limits above.
+  -->
+  <ros2_control name="GazeboSimSystem" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+
+    <joint name="left_wheel_joint">
+      <command_interface name="effort">
+        <param name="min">-12.0</param>
+        <param name="max">12.0</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+
+    <joint name="right_wheel_joint">
+      <command_interface name="effort">
+        <param name="min">-12.0</param>
+        <param name="max">12.0</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+
+    <!-- Passive caster joints are exported for complete /joint_states. -->
+    <joint name="caster_left_swivel_joint">
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="caster_left_wheel_joint">
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="caster_right_swivel_joint">
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="caster_right_wheel_joint">
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+
+  <gazebo>
+    <plugin filename="libgz_ros2_control-system.so"
+            name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(arg controllers_file)</parameters>
+    </plugin>
+  </gazebo>
+</robot>

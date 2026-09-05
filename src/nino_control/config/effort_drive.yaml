@@ -1,0 +1,32 @@
+effort_drive:
+  ros__parameters:
+    use_sim_time: true
+
+    left_wheel_joint: left_wheel_joint
+    right_wheel_joint: right_wheel_joint
+    wheel_radius: 0.0625
+    wheel_separation: 0.34273666
+
+    # Wheel-speed PI loop. Output is physical joint torque in N.m.
+    velocity_kp: 0.30
+    velocity_ki: 0.10
+    integral_limit: 4.0
+    # Software operating limit; the URDF emergency limit is 24 rad/s.
+    max_wheel_speed: 12.0
+    max_wheel_acceleration: 12.0
+    max_wheel_torque: 12.0
+    max_velocity_control_torque: 2.0
+    # Avoid an unrealistically instantaneous torque step when a wheel unloads.
+    max_effort_rate: 10.0
+    command_timeout: 0.5
+    torque_command_timeout: 0.25
+    # Run at the 1 ms Gazebo physics period.  A slower loop can let an
+    # unloaded wheel overshoot its velocity limit before effort is reduced.
+    control_rate: 1000.0
+
+    odom_publish_rate: 50.0
+    torque_status_publish_rate: 50.0
+    odom_topic: /odom
+    odom_frame_id: odom
+    base_frame_id: base_footprint
+    publish_odom_tf: true

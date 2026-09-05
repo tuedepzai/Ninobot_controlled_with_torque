@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Run Gazebo Sim and turn an intentional launch interrupt into a clean exit."""
+
+import os
+import signal
+import subprocess
+import sys
+
+
+child = None
+shutdown_requested = False
+
+
+def request_shutdown(_signum=None, _frame=None) -> None:
+    """Ask the Gazebo server to stop before launch escalates the signal."""
+    global shutdown_requested
+    if shutdown_requested:
+        return
+    shutdown_requested = True
+
+    try:
+        subprocess.run(
+            [
+                "gz",
+                "service",
+                "-s",
+                "/server_control",
+                "--reqtype",
+                "gz.msgs.ServerControl",
+                "--reptype",
+                "gz.msgs.Boolean",
+                "--timeout",
+                "1000",
+                "--req",
+                "stop: true",
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    if child is not None and child.poll() is None:
+        try:
+            child.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGTERM)
+
+
+def main() -> int:
+    global child
+
+    signal.signal(signal.SIGINT, request_shutdown)
+    signal.signal(signal.SIGTERM, request_shutdown)
+
+    # Empty arguments can come from conditional launch substitutions.
+    gazebo_arguments = [argument for argument in sys.argv[1:] if argument]
+    child = subprocess.Popen(
+        ["gz", "sim", *gazebo_arguments],
+        start_new_session=True,
+    )
+    return_code = child.wait()
+
+    # Preserve real Gazebo failures; normalize only an operator-requested stop.
+    return 0 if shutdown_requested else return_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
