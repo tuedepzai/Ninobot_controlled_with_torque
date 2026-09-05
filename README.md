@@ -264,3 +264,4 @@ vary from 16–44 mm diameter and −22° to +24°. Every angled cable length is
 `4.0 / cos(angle)`, so it reaches both inner wall faces.
 # Ninobot_controlled_with_torque
 # Ninobot_controlled_with_torque
+# Ninobot_controlled_with_torque
