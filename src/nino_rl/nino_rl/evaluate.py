@@ -81,6 +81,13 @@ def main() -> None:
         ),
         "mean_abs_roll_deg": float(np.mean([row["mean_abs_roll_deg"] for row in rows])),
         "mean_abs_pitch_deg": float(np.mean([row["mean_abs_pitch_deg"] for row in rows])),
+        "mean_imu_angular_xy_rad_s": float(
+            np.mean([row["mean_imu_angular_xy_rad_s"] for row in rows])
+        ),
+        "mean_imu_acceleration_change_m_s2": float(
+            np.mean([row["mean_imu_acceleration_change_m_s2"] for row in rows])
+        ),
+        "max_tilt_deg": float(np.max([row["max_tilt_deg"] for row in rows])),
     }
     json_path = output / f"summary-{stamp}.json"
     with json_path.open("w", encoding="utf-8") as stream:

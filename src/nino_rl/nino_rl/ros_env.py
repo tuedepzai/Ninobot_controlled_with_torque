@@ -62,11 +62,15 @@ class NinoGazeboEnv(gym.Env):
         self.previous_action = np.zeros(2, dtype=np.float32)
         self.action_before_previous = np.zeros(2, dtype=np.float32)
         self.previous_tracking = None
+        self.previous_robot_state = None
         self._last_noisy_state: RobotState | None = None
         self.episode_return = 0.0
         self.abs_lateral_sum = 0.0
         self.abs_roll_sum = 0.0
         self.abs_pitch_sum = 0.0
+        self.imu_angular_xy_sum = 0.0
+        self.imu_acceleration_change_sum = 0.0
+        self.max_tilt_deg = 0.0
 
     def _spin_executor(self) -> None:
         while not self.executor_stop.is_set() and rclpy.ok():
@@ -161,7 +165,11 @@ class NinoGazeboEnv(gym.Env):
         self.abs_lateral_sum = 0.0
         self.abs_roll_sum = 0.0
         self.abs_pitch_sum = 0.0
+        self.imu_angular_xy_sum = 0.0
+        self.imu_acceleration_change_sum = 0.0
+        self.max_tilt_deg = 0.0
         truth = self.ros.snapshot()
+        self.previous_robot_state = deepcopy(truth)
         observation, _ = make_observation(
             self._noisy_state(truth), self.path, self.lookahead, self.previous_action
         )
@@ -210,6 +218,7 @@ class NinoGazeboEnv(gym.Env):
             self.previous_tracking,
             tracking,
             truth,
+            self.previous_robot_state,
             action,
             self.previous_action,
             self.action_before_previous,
@@ -224,7 +233,27 @@ class NinoGazeboEnv(gym.Env):
         self.abs_lateral_sum += abs(tracking.lateral_error)
         self.abs_roll_sum += abs(degrees(truth.roll))
         self.abs_pitch_sum += abs(degrees(truth.pitch))
+        self.imu_angular_xy_sum += float(np.hypot(truth.gyro_x, truth.gyro_y))
+        self.imu_acceleration_change_sum += float(
+            np.linalg.norm(
+                np.asarray(
+                    [truth.accel_x, truth.accel_y, truth.accel_z], dtype=np.float64
+                )
+                - np.asarray(
+                    [
+                        self.previous_robot_state.accel_x,
+                        self.previous_robot_state.accel_y,
+                        self.previous_robot_state.accel_z,
+                    ],
+                    dtype=np.float64,
+                )
+            )
+        )
+        self.max_tilt_deg = max(
+            self.max_tilt_deg, abs(degrees(truth.roll)), abs(degrees(truth.pitch))
+        )
         self.previous_tracking = tracking
+        self.previous_robot_state = deepcopy(truth)
         self.action_before_previous = self.previous_action.copy()
         self.previous_action = action.copy()
 
@@ -241,6 +270,11 @@ class NinoGazeboEnv(gym.Env):
                 "mean_abs_lateral_error_m": self.abs_lateral_sum / count,
                 "mean_abs_roll_deg": self.abs_roll_sum / count,
                 "mean_abs_pitch_deg": self.abs_pitch_sum / count,
+                "mean_imu_angular_xy_rad_s": self.imu_angular_xy_sum / count,
+                "mean_imu_acceleration_change_m_s2": (
+                    self.imu_acceleration_change_sum / count
+                ),
+                "max_tilt_deg": self.max_tilt_deg,
                 "termination": (
                     "success" if succeeded else "rollover" if rolled else "off_path" if off_path else "collision" if collision else "timeout"
                 ),

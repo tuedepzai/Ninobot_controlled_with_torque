@@ -34,7 +34,7 @@ Trong implementation hiện tại, độ bám `[0.3, 1.0]` được mô phỏng 
 
 ### Observation và action của Nino
 
-Observation có 36 giá trị hữu hạn, được chuẩn hóa:
+Observation có 41 giá trị hữu hạn, được chuẩn hóa. Callback `/imu/data` đọc và chuẩn hóa quaternion trước khi tạo observation:
 
 | Thành phần | Số chiều |
 |---|---:|
@@ -42,9 +42,20 @@ Observation có 36 giá trị hữu hạn, được chuẩn hóa:
 | `cos/sin` sai số hướng | 2 |
 | vận tốc thẳng và yaw rate | 2 |
 | encoder velocity trái/phải | 2 |
-| IMU roll, pitch, gyro-z, accel-x, accel-z | 5 |
+| IMU quaternion `(x,y,z,w)`, angular velocity XYZ, linear acceleration XYZ | 10 |
 | khoảng cách nhỏ nhất trong 5 vùng LiDAR | 5 |
 | action trước đó | 2 |
+
+Roll/pitch vẫn được tính từ quaternion để dùng cho điều kiện rollover và reward, nhưng policy nhận trực tiếp toàn bộ 10 giá trị IMU. Hướng mong muốn là tiếp tuyến của đường tại điểm gần robot nhất; `cos/sin` sai số hướng tránh gián đoạn tại ±π.
+
+Reward IMU bổ sung gồm:
+
+- `imu_stability`: thưởng **tiến độ ổn định**, lớn nhất khi roll/pitch nhỏ, tốc độ quay quanh X/Y nhỏ và gia tốc thay đổi ít;
+- `imu_vibration`: phạt rung dựa trên gyro X/Y và độ thay đổi vector gia tốc giữa hai bước;
+- `direction`: thưởng tiến độ theo `max(0, cos(e_heading))`, lớn nhất khi robot tiến đúng hướng mong muốn;
+- `rollover`: phạt mạnh riêng khi roll/pitch vượt ngưỡng 30 độ.
+
+Stable bonus và direction reward đều được nhân với quãng đường tiến lên nên robot không thể nhận thưởng chỉ bằng cách đứng yên. Sai hướng vẫn bị `heading` phạt riêng. Không phạt trực tiếp gyro-Z trong stability reward vì yaw-rate là cần thiết khi bám đường cong.
 
 Action là `Box([-1,-1], [1,1])`, nhân với giới hạn mặc định `4 N.m`, rồi phát lên `/wheel_torque_commands` theo thứ tự `[trái, phải]`. `effort_drive` vẫn giới hạn cứng tối đa `12 N.m`, slew-rate và timeout 0,25 s.
 
@@ -163,7 +174,7 @@ ros2 run nino_rl evaluate \
   --episodes 25 --randomized
 ```
 
-Output trong `rl_runs/evaluation/` gồm từng episode ở CSV và summary JSON: success rate, thời gian, sai số ngang trung bình, roll/pitch trung bình. Nên chỉ chuyển sang robot thật khi test deterministic và randomized đều ổn định, không rollover/collision và sai số phù hợp giới hạn cơ khí của bạn.
+Output trong `rl_runs/evaluation/` gồm từng episode ở CSV và summary JSON: success rate, thời gian, sai số ngang, roll/pitch, max tilt, angular-rate XY và độ thay đổi gia tốc IMU trung bình. Nên chỉ chuyển sang robot thật khi test deterministic và randomized đều ổn định, không rollover/collision và sai số phù hợp giới hạn cơ khí của bạn.
 
 ## 4. Chạy policy trong Gazebo
 
@@ -217,7 +228,7 @@ ros2 topic echo /wheel_torque_applied
 - thiếu `/reset_wheel_odometry`: build/source lại workspace sau thay đổi `nino_control`.
 - `torch.cuda.is_available() = False`: active đúng `.venv`, chạy `check_cuda`; không cho script âm thầm train CPU.
 - thiếu sensor khi reset: kiểm tra simulation chỉ chạy một phiên và bốn topic `/odom`, `/imu/data`, `/joint_states`, `/scan` đang có dữ liệu.
-- model báo shape khác `(36,)`: model đó được train bằng observation version khác, không được dùng trực tiếp.
+- model báo shape khác `(41,)`: model đó được train bằng observation version cũ/khác, không được dùng trực tiếp; hãy train lại.
 - robot rung mạnh: giảm `max_wheel_torque_nm`, tăng phạt `smoothness_weight`, rồi train/evaluate lại; không chỉnh model trong lúc đang chạy thật.
 
 ## Nguồn

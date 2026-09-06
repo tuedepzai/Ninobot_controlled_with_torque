@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from math import sqrt
 from threading import Lock
 from time import monotonic, sleep
 
@@ -75,14 +76,36 @@ class RosRobotInterface(Node):
 
     def _imu_callback(self, message: Imu) -> None:
         quaternion = message.orientation
+        norm = sqrt(
+            quaternion.x * quaternion.x
+            + quaternion.y * quaternion.y
+            + quaternion.z * quaternion.z
+            + quaternion.w * quaternion.w
+        )
+        if norm < 1.0e-12:
+            orientation = (0.0, 0.0, 0.0, 1.0)
+        else:
+            orientation = (
+                quaternion.x / norm,
+                quaternion.y / norm,
+                quaternion.z / norm,
+                quaternion.w / norm,
+            )
         roll, pitch, _ = quaternion_to_euler(
-            quaternion.x, quaternion.y, quaternion.z, quaternion.w
+            *orientation
         )
         with self._lock:
             self._state.roll = roll
             self._state.pitch = pitch
+            self._state.orientation_x = float(orientation[0])
+            self._state.orientation_y = float(orientation[1])
+            self._state.orientation_z = float(orientation[2])
+            self._state.orientation_w = float(orientation[3])
+            self._state.gyro_x = float(message.angular_velocity.x)
+            self._state.gyro_y = float(message.angular_velocity.y)
             self._state.gyro_z = float(message.angular_velocity.z)
             self._state.accel_x = float(message.linear_acceleration.x)
+            self._state.accel_y = float(message.linear_acceleration.y)
             self._state.accel_z = float(message.linear_acceleration.z)
             self._received.add("imu")
 

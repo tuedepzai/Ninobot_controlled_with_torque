@@ -37,6 +37,7 @@ reward:
   alignment_weight: 16.0
   lateral_weight: 0.8
   heading_weight: 0.2
+  direction_weight: 1.0
   smoothness_weight: 0.2
   sigma_lateral_m: 0.30
   sigma_heading_rad: 0.35
@@ -49,6 +50,12 @@ reward:
   timeout_constant: 100.0
   time_penalty: 0.01
   success_bonus: 100.0
+  # Stable progress bonus and vibration penalty use the complete IMU stream.
+  imu_stability_weight: 10.0
+  imu_vibration_weight: 0.2
+  imu_tilt_sigma_rad: 0.20
+  imu_angular_rate_sigma_rad_s: 1.0
+  imu_acceleration_change_sigma_m_s2: 2.0
 
 ppo:
   learning_rate: 0.0005

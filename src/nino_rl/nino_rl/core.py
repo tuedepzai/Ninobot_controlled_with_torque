@@ -15,7 +15,7 @@ import numpy as np
 import yaml
 
 
-OBSERVATION_SIZE = 36
+OBSERVATION_SIZE = 41
 
 
 def load_config(path: str | Path) -> dict:
@@ -153,8 +153,15 @@ class RobotState:
     right_wheel_velocity: float = 0.0
     roll: float = 0.0
     pitch: float = 0.0
+    orientation_x: float = 0.0
+    orientation_y: float = 0.0
+    orientation_z: float = 0.0
+    orientation_w: float = 1.0
+    gyro_x: float = 0.0
+    gyro_y: float = 0.0
     gyro_z: float = 0.0
     accel_x: float = 0.0
+    accel_y: float = 0.0
     accel_z: float = 0.0
     lidar_ranges: Sequence[float] = ()
     lidar_range_max: float = 10.0
@@ -185,7 +192,18 @@ def make_observation(
             [cos(heading_error), sin(heading_error)],
             [state.linear_velocity / 1.0, state.yaw_rate / 3.0],
             [state.left_wheel_velocity / 24.0, state.right_wheel_velocity / 24.0],
-            [state.roll / pi, state.pitch / pi, state.gyro_z / 3.0, state.accel_x / 10.0, state.accel_z / 10.0],
+            [
+                state.orientation_x,
+                state.orientation_y,
+                state.orientation_z,
+                state.orientation_w,
+                state.gyro_x / 3.0,
+                state.gyro_y / 3.0,
+                state.gyro_z / 3.0,
+                state.accel_x / 10.0,
+                state.accel_y / 10.0,
+                state.accel_z / 10.0,
+            ],
             lidar_sectors(state.lidar_ranges, state.lidar_range_max),
             np.asarray(previous_action, dtype=np.float64),
         ]
@@ -206,6 +224,7 @@ def compute_reward(
     previous: TrackingState,
     current: TrackingState,
     state: RobotState,
+    previous_state: RobotState,
     action: Sequence[float],
     previous_action: Sequence[float],
     action_before_previous: Sequence[float],
@@ -237,6 +256,38 @@ def compute_reward(
     heading = -float(reward_config["heading_weight"]) * (
         abs(current.heading_error) / float(reward_config["sigma_heading_rad"])
     ) ** 2
+    direction = (
+        float(reward_config["direction_weight"])
+        * max(0.0, delta_s)
+        * max(0.0, cos(current.heading_error))
+    )
+    tilt_sigma = float(reward_config["imu_tilt_sigma_rad"])
+    rate_sigma = float(reward_config["imu_angular_rate_sigma_rad_s"])
+    acceleration_sigma = float(reward_config["imu_acceleration_change_sigma_m_s2"])
+    tilt_energy = (state.roll / tilt_sigma) ** 2 + (state.pitch / tilt_sigma) ** 2
+    angular_energy = (state.gyro_x / rate_sigma) ** 2 + (
+        state.gyro_y / rate_sigma
+    ) ** 2
+    acceleration_change = np.asarray(
+        [
+            state.accel_x - previous_state.accel_x,
+            state.accel_y - previous_state.accel_y,
+            state.accel_z - previous_state.accel_z,
+        ],
+        dtype=np.float64,
+    )
+    acceleration_energy = float(
+        np.mean((acceleration_change / acceleration_sigma) ** 2)
+    )
+    stability_score = exp(-(tilt_energy + angular_energy + acceleration_energy))
+    imu_stability = (
+        float(reward_config["imu_stability_weight"])
+        * max(0.0, delta_s)
+        * stability_score
+    )
+    imu_vibration = -float(reward_config["imu_vibration_weight"]) * (
+        angular_energy + acceleration_energy
+    ) * dt
     second_difference = (
         np.asarray(action, dtype=np.float64)
         - 2.0 * np.asarray(previous_action, dtype=np.float64)
@@ -262,6 +313,9 @@ def compute_reward(
         "alignment": float(alignment),
         "lateral": float(lateral),
         "heading": float(heading),
+        "direction": float(direction),
+        "imu_stability": float(imu_stability),
+        "imu_vibration": float(imu_vibration),
         "smoothness": float(smoothness),
         "stuck": float(stuck),
         "rollover": float(rollover),
