@@ -7,7 +7,7 @@ its geometry and reward logic can be unit tested on a plain Python install.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import atan2, cos, degrees, exp, pi, sin, sqrt
+from math import atan2, cos, degrees, exp, pi, radians, sin, sqrt
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -173,6 +173,24 @@ class TrackingState:
     lateral_error: float
     heading_error: float
     distance_remaining: float
+    endpoint_distance: float
+
+
+def goal_reached(
+    tracking: TrackingState, state: RobotState, config: Mapping[str, float]
+) -> bool:
+    """Require an accurate, upright, nearly stopped arrival at the endpoint."""
+    return (
+        tracking.endpoint_distance <= float(config["goal_tolerance_m"])
+        and abs(tracking.lateral_error)
+        <= float(config["goal_lateral_tolerance_m"])
+        and abs(tracking.heading_error)
+        <= radians(float(config["goal_heading_tolerance_deg"]))
+        and abs(state.linear_velocity) <= float(config["goal_max_speed_m_s"])
+        and abs(state.yaw_rate) <= float(config["goal_max_yaw_rate_rad_s"])
+        and max(abs(state.roll), abs(state.pitch))
+        <= radians(float(config["goal_max_tilt_deg"]))
+    )
 
 
 def make_observation(
@@ -216,6 +234,9 @@ def make_observation(
         lateral_error=lateral,
         heading_error=heading_error,
         distance_remaining=max(0.0, path.total_length - path_s),
+        endpoint_distance=float(
+            np.linalg.norm(np.asarray([state.x, state.y]) - path.points[-1])
+        ),
     )
     return np.clip(observation, -5.0, 5.0), tracking
 
@@ -288,6 +309,20 @@ def compute_reward(
     imu_vibration = -float(reward_config["imu_vibration_weight"]) * (
         angular_energy + acceleration_energy
     ) * dt
+    slowdown_distance = float(reward_config["goal_slowdown_distance_m"])
+    slowdown_fraction = max(
+        0.0, 1.0 - current.endpoint_distance / max(slowdown_distance, 1.0e-6)
+    )
+    max_goal_speed = max(float(reward_config["goal_max_speed_m_s"]), 1.0e-6)
+    max_goal_yaw_rate = max(
+        float(reward_config["goal_max_yaw_rate_rad_s"]), 1.0e-6
+    )
+    excess_speed = max(0.0, abs(state.linear_velocity) - max_goal_speed)
+    excess_yaw_rate = max(0.0, abs(state.yaw_rate) - max_goal_yaw_rate)
+    endpoint_motion = -float(reward_config["endpoint_motion_weight"]) * slowdown_fraction * (
+        (excess_speed / max_goal_speed) ** 2
+        + (excess_yaw_rate / max_goal_yaw_rate) ** 2
+    ) * dt
     second_difference = (
         np.asarray(action, dtype=np.float64)
         - 2.0 * np.asarray(previous_action, dtype=np.float64)
@@ -307,6 +342,14 @@ def compute_reward(
             + float(reward_config["timeout_constant"])
         )
     success = float(reward_config["success_bonus"]) if succeeded else 0.0
+    early_finish = 0.0
+    if succeeded:
+        target_time = float(reward_config["target_finish_seconds"])
+        if target_time <= 0.0:
+            raise ValueError("target_finish_seconds must be positive")
+        early_finish = float(reward_config["early_finish_bonus"]) * max(
+            0.0, (target_time - elapsed) / target_time
+        )
     time_cost = -float(reward_config["time_penalty"])
     terms = {
         "progress": float(progress),
@@ -316,12 +359,14 @@ def compute_reward(
         "direction": float(direction),
         "imu_stability": float(imu_stability),
         "imu_vibration": float(imu_vibration),
+        "endpoint_motion": float(endpoint_motion),
         "smoothness": float(smoothness),
         "stuck": float(stuck),
         "rollover": float(rollover),
         "timeout": float(timeout),
         "time": float(time_cost),
         "success": float(success),
+        "early_finish": float(early_finish),
     }
     return float(sum(terms.values())), terms
 
@@ -334,6 +379,7 @@ def metrics_dict(
         "time_seconds": elapsed,
         "progress_m": tracking.path_s,
         "remaining_m": tracking.distance_remaining,
+        "endpoint_distance_m": tracking.endpoint_distance,
         "lateral_error_m": tracking.lateral_error,
         "heading_error_deg": degrees(tracking.heading_error),
         "roll_deg": degrees(state.roll),

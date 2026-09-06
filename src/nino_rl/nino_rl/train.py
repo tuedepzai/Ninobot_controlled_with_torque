@@ -9,6 +9,7 @@ import shutil
 import sys
 
 from ament_index_python.packages import get_package_share_directory
+import numpy as np
 
 from nino_rl.core import load_config
 
@@ -32,7 +33,7 @@ def main() -> None:
     try:
         import torch as th
         from stable_baselines3 import PPO
-        from stable_baselines3.common.callbacks import CheckpointCallback
+        from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
         from stable_baselines3.common.env_checker import check_env
         from stable_baselines3.common.monitor import Monitor
     except ImportError as error:
@@ -50,6 +51,39 @@ def main() -> None:
         )
 
     from nino_rl.ros_env import NinoGazeboEnv
+
+    class TrainingMetricsCallback(BaseCallback):
+        """Expose reward components and endpoint metrics in TensorBoard."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.reward_terms: dict[str, list[float]] = {}
+
+        def _on_rollout_start(self) -> None:
+            self.reward_terms.clear()
+
+        def _on_step(self) -> bool:
+            for info in self.locals.get("infos", []):
+                for name, value in info.get("reward_terms", {}).items():
+                    self.reward_terms.setdefault(name, []).append(float(value))
+                metrics = info.get("episode_metrics")
+                if metrics is not None:
+                    for name in (
+                        "success",
+                        "finished_within_target_time",
+                        "time_seconds",
+                        "endpoint_distance_m",
+                        "mean_abs_lateral_error_m",
+                        "max_tilt_deg",
+                        "mean_imu_angular_xy_rad_s",
+                    ):
+                        self.logger.record(f"episode/{name}", float(metrics[name]))
+            return True
+
+        def _on_rollout_end(self) -> None:
+            for name, values in self.reward_terms.items():
+                if values:
+                    self.logger.record(f"reward_terms/{name}", float(np.mean(values)))
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = args.output.expanduser().resolve() / stamp
@@ -99,7 +133,7 @@ def main() -> None:
             )
             reset_num_timesteps = True
 
-        callback = CheckpointCallback(
+        checkpoint_callback = CheckpointCallback(
             save_freq=max(1, int(args.checkpoint_every)),
             save_path=str(checkpoint_dir),
             name_prefix="nino_ppo",
@@ -109,7 +143,7 @@ def main() -> None:
         print(f"Bắt đầu train trên {model.device}; kết quả: {run_dir}")
         model.learn(
             total_timesteps=args.timesteps,
-            callback=callback,
+            callback=[checkpoint_callback, TrainingMetricsCallback()],
             reset_num_timesteps=reset_num_timesteps,
             progress_bar=True,
         )

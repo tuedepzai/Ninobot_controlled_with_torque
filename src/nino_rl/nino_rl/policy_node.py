@@ -17,6 +17,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from nino_rl.core import (
     OBSERVATION_SIZE,
     PathTracker,
+    goal_reached,
     load_config,
     make_observation,
     quaternion_to_euler,
@@ -55,13 +56,14 @@ class PolicyNode(RosRobotInterface):
         self.path_source = "YAML"
         self.last_nav_signature = None
         self.last_tf_warning = 0.0
+        self.path_started_at = None
+        self.deadline_reported = False
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.previous_action = np.zeros(2, dtype=np.float32)
         self.action_scale = float(self.config["max_wheel_torque_nm"])
         self.lookahead = list(self.config["path"]["lookahead_m"])
         self.collision_distance = float(self.config["lidar_collision_m"])
-        self.goal_tolerance = float(self.config["goal_tolerance_m"])
         self.off_path_limit = float(self.config["off_path_limit_m"])
         self.rollover_limit = np.deg2rad(float(self.config["rollover_limit_deg"]))
         device = args.device or str(self.config.get("device", "cuda"))
@@ -111,15 +113,24 @@ class PolicyNode(RosRobotInterface):
                 )
                 self.last_tf_warning = now
             return
+        previous_goal = self.path.points[-1].copy()
         self.path.set_points(transformed)
         self.last_nav_signature = signature
         self.path_source = f"Nav2 ({frame}->odom)"
+        goal_changed = np.linalg.norm(self.path.points[-1] - previous_goal) > float(
+            self.config["goal_tolerance_m"]
+        )
+        if self.path_started_at is None or goal_changed:
+            self.path_started_at = monotonic()
+            self.deadline_reported = False
         self.get_logger().info(f"Using {len(points)} waypoints from {self.path_source}")
 
     def _control(self) -> None:
         if not self.sensors_ready():
             self.publish_torque(0.0, 0.0)
             return
+        if self.path_started_at is None:
+            self.path_started_at = monotonic()
         self._update_nav_path()
         state = self.snapshot()
         finite_ranges = [value for value in state.lidar_ranges if np.isfinite(value)]
@@ -129,13 +140,22 @@ class PolicyNode(RosRobotInterface):
         observation, tracking = make_observation(
             state, self.path, self.lookahead, self.previous_action
         )
+        timed_out = monotonic() - self.path_started_at >= float(
+            self.config["max_episode_seconds"]
+        )
         if (
-            tracking.distance_remaining <= self.goal_tolerance
+            goal_reached(tracking, state, self.config)
+            or timed_out
             or abs(tracking.lateral_error) >= self.off_path_limit
             or max(abs(state.roll), abs(state.pitch)) >= self.rollover_limit
         ):
             self.publish_torque(0.0, 0.0)
             self.previous_action.fill(0.0)
+            if timed_out and not self.deadline_reported:
+                self.get_logger().warning(
+                    "Quá thời gian chạy tối đa; giữ mô-men hai bánh ở 0"
+                )
+                self.deadline_reported = True
             return
         action, _ = self.model.predict(observation, deterministic=True)
         action = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)

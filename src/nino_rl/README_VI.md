@@ -6,7 +6,7 @@ Package `nino_rl` cung cấp ba chương trình hoàn chỉnh:
 - `evaluate`: chạy test xác định và ghi chỉ số ra CSV/JSON;
 - `policy_node`: chạy policy đã học, nhận đường `/plan` từ Nav2 và xuất mô-men trái/phải.
 
-Mục tiêu là đi qua địa hình gồ ghề mà vẫn bám đường, hạn chế lật/kẹt, giảm thời gian và không đi ra ngoài hành lang. Policy sử dụng đồng thời IMU, encoder, LiDAR, odometry và các waypoint nhìn trước.
+Mục tiêu là đi qua địa hình gồ ghề mà vẫn bám đường, hạn chế lật/kẹt, giảm thời gian, dừng êm đúng endpoint và không đi ra ngoài hành lang. Policy sử dụng đồng thời IMU, encoder, LiDAR, odometry và các waypoint nhìn trước.
 
 > **An toàn:** model mới khởi tạo hoặc chưa được đánh giá có thể phát mô-men bất ngờ. Chỉ chạy trong Gazebo cho đến khi đạt tiêu chí test. Khi thử trên robot thật phải kê bánh/giới hạn mô-men, có nút dừng khẩn cấp và người giám sát.
 
@@ -54,8 +54,19 @@ Reward IMU bổ sung gồm:
 - `imu_vibration`: phạt rung dựa trên gyro X/Y và độ thay đổi vector gia tốc giữa hai bước;
 - `direction`: thưởng tiến độ theo `max(0, cos(e_heading))`, lớn nhất khi robot tiến đúng hướng mong muốn;
 - `rollover`: phạt mạnh riêng khi roll/pitch vượt ngưỡng 30 độ.
+- `endpoint_motion`: trong 2 m cuối, phạt vận tốc thẳng/yaw-rate vượt ngưỡng để policy học giảm tốc và dừng êm;
+- `success`: thưởng 100 điểm khi xe thật sự ổn định tại endpoint;
+- `early_finish`: thưởng thêm tuyến tính theo thời gian về sớm, tối đa 100 điểm. Với deadline thưởng 50 s, về ở 40 s được thêm 20 điểm; từ 50 s trở đi không còn thưởng sớm.
 
 Stable bonus và direction reward đều được nhân với quãng đường tiến lên nên robot không thể nhận thưởng chỉ bằng cách đứng yên. Sai hướng vẫn bị `heading` phạt riêng. Không phạt trực tiếp gyro-Z trong stability reward vì yaw-rate là cần thiết khi bám đường cong.
+
+Một episode chỉ thành công khi đồng thời thỏa tất cả điều kiện mặc định:
+
+- cách endpoint không quá `0,45 m`, lệch ngang không quá `0,25 m`, sai hướng không quá `12°`;
+- vận tốc thẳng không quá `0,20 m/s`, yaw-rate không quá `0,30 rad/s`;
+- roll và pitch đều không quá `10°`.
+
+Episode dừng ngay khi thành công, collision, lệch đường, rollover; hoặc bị truncate khi hết `60 s`. `target_finish_seconds: 50` là mốc tính thưởng về sớm, còn `max_episode_seconds: 60` là deadline cứng. Hai giá trị đều chỉnh được trong `config/ppo.yaml`.
 
 Action là `Box([-1,-1], [1,1])`, nhân với giới hạn mặc định `4 N.m`, rồi phát lên `/wheel_torque_commands` theo thứ tự `[trái, phải]`. `effort_drive` vẫn giới hạn cứng tối đa `12 N.m`, slew-rate và timeout 0,25 s.
 
@@ -108,6 +119,12 @@ source install/setup.bash
 ros2 launch nino_rl training_sim.launch.py headless:=true
 ```
 
+Muốn **xem xe train trực tiếp**, dùng Gazebo GUI ở Terminal 1 (train sẽ chậm hơn headless):
+
+```bash
+ros2 launch nino_rl training_sim.launch.py headless:=false rviz:=true
+```
+
 Terminal 2 — train 500.000 bước bằng CUDA:
 
 ```bash
@@ -135,12 +152,14 @@ rl_runs/YYYYMMDD-HHMMSS/
 └── tensorboard/
 ```
 
-Theo dõi reward/loss/GPU:
+Theo dõi reward/loss/GPU trong lúc train (mở thêm terminal hoặc trình duyệt tại `http://localhost:6006`):
 
 ```bash
 tensorboard --logdir rl_runs
 watch -n 1 nvidia-smi
 ```
+
+Trong TensorBoard, nhóm `reward_terms/*` cho biết từng phần thưởng/phạt; nhóm `episode/*` hiển thị success, đúng hạn, thời gian, khoảng cách endpoint, sai số ngang, max tilt và độ rung IMU.
 
 Train tiếp từ checkpoint:
 
@@ -174,7 +193,7 @@ ros2 run nino_rl evaluate \
   --episodes 25 --randomized
 ```
 
-Output trong `rl_runs/evaluation/` gồm từng episode ở CSV và summary JSON: success rate, thời gian, sai số ngang, roll/pitch, max tilt, angular-rate XY và độ thay đổi gia tốc IMU trung bình. Nên chỉ chuyển sang robot thật khi test deterministic và randomized đều ổn định, không rollover/collision và sai số phù hợp giới hạn cơ khí của bạn.
+Output trong `rl_runs/evaluation/` gồm từng episode ở CSV và summary JSON: success rate, tỷ lệ thành công trước 50 s, thời gian thành công, khoảng cách cuối tới endpoint, vận tốc cuối, sai số ngang, roll/pitch, max tilt, angular-rate XY và độ thay đổi gia tốc IMU trung bình. Nên chỉ chuyển sang robot thật khi test deterministic và randomized đều ổn định, không rollover/collision và sai số phù hợp giới hạn cơ khí của bạn.
 
 ## 4. Chạy policy trong Gazebo
 

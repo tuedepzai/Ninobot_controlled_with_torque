@@ -19,6 +19,7 @@ from nino_rl.core import (
     RobotState,
     catmull_rom_path,
     compute_reward,
+    goal_reached,
     make_observation,
     metrics_dict,
 )
@@ -204,7 +205,7 @@ class NinoGazeboEnv(gym.Env):
         _, tracking = make_observation(truth, self.path, self.lookahead, action)
 
         min_lidar = min(truth.lidar_ranges, default=truth.lidar_range_max)
-        succeeded = tracking.distance_remaining <= float(self.config["goal_tolerance_m"])
+        succeeded = goal_reached(tracking, truth, self.config)
         rolled = max(abs(degrees(truth.roll)), abs(degrees(truth.pitch))) >= float(
             self.config["rollover_limit_deg"]
         )
@@ -224,7 +225,14 @@ class NinoGazeboEnv(gym.Env):
             self.action_before_previous,
             self.control_dt,
             elapsed,
-            self.config["reward"],
+            {
+                **self.config["reward"],
+                "target_finish_seconds": self.config["target_finish_seconds"],
+                "goal_max_speed_m_s": self.config["goal_max_speed_m_s"],
+                "goal_max_yaw_rate_rad_s": self.config[
+                    "goal_max_yaw_rate_rad_s"
+                ],
+            },
             level,
             timed_out=truncated,
             succeeded=succeeded,
@@ -275,6 +283,19 @@ class NinoGazeboEnv(gym.Env):
                     self.imu_acceleration_change_sum / count
                 ),
                 "max_tilt_deg": self.max_tilt_deg,
+                "finished_within_target_time": bool(
+                    succeeded
+                    and elapsed <= float(self.config["target_finish_seconds"])
+                ),
+                "time_margin_seconds": float(
+                    self.config["target_finish_seconds"]
+                )
+                - elapsed,
+                "target_finish_seconds": float(
+                    self.config["target_finish_seconds"]
+                ),
+                "final_speed_m_s": truth.linear_velocity,
+                "final_yaw_rate_rad_s": truth.yaw_rate,
                 "termination": (
                     "success" if succeeded else "rollover" if rolled else "off_path" if off_path else "collision" if collision else "timeout"
                 ),

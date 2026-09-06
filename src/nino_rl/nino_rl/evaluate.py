@@ -59,6 +59,7 @@ def main() -> None:
             print(
                 f"Episode {episode + 1}: {metrics['termination']}, "
                 f"t={metrics['time_seconds']:.1f}s, "
+                f"đúng hạn={metrics['finished_within_target_time']}, "
                 f"|e_y|={metrics['mean_abs_lateral_error_m']:.3f}m"
             )
     finally:
@@ -72,10 +73,26 @@ def main() -> None:
         writer = csv.DictWriter(stream, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
+    successful_rows = [row for row in rows if row["success"]]
     summary = {
         "episodes": len(rows),
         "success_rate": float(np.mean([row["success"] for row in rows])),
+        "on_time_success_rate": float(
+            np.mean([row["finished_within_target_time"] for row in rows])
+        ),
+        "target_finish_seconds": float(config["target_finish_seconds"]),
         "mean_time_seconds": float(np.mean([row["time_seconds"] for row in rows])),
+        "mean_success_time_seconds": (
+            float(np.mean([row["time_seconds"] for row in successful_rows]))
+            if successful_rows
+            else None
+        ),
+        "mean_endpoint_distance_m": float(
+            np.mean([row["endpoint_distance_m"] for row in rows])
+        ),
+        "mean_final_speed_m_s": float(
+            np.mean([abs(row["final_speed_m_s"]) for row in rows])
+        ),
         "mean_abs_lateral_error_m": float(
             np.mean([row["mean_abs_lateral_error_m"] for row in rows])
         ),

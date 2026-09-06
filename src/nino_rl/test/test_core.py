@@ -9,6 +9,7 @@ from nino_rl.core import (
     TrackingState,
     catmull_rom_path,
     compute_reward,
+    goal_reached,
     lidar_sectors,
     make_observation,
     quaternion_to_euler,
@@ -97,16 +98,22 @@ def test_reward_prefers_progress_and_penalizes_tracking_error():
         "timeout_distance_weight": 10.0,
         "timeout_constant": 100.0,
         "success_bonus": 100.0,
+        "early_finish_bonus": 100.0,
+        "target_finish_seconds": 50.0,
         "time_penalty": 0.01,
+        "goal_slowdown_distance_m": 2.0,
+        "goal_max_speed_m_s": 0.2,
+        "goal_max_yaw_rate_rad_s": 0.3,
+        "endpoint_motion_weight": 1.0,
         "imu_stability_weight": 10.0,
         "imu_vibration_weight": 0.2,
         "imu_tilt_sigma_rad": 0.2,
         "imu_angular_rate_sigma_rad_s": 1.0,
         "imu_acceleration_change_sigma_m_s2": 2.0,
     }
-    previous = TrackingState(0.0, 0.0, 0.0, 10.0)
-    good = TrackingState(0.1, 0.0, 0.0, 9.9)
-    bad = TrackingState(0.1, 0.6, 0.7, 9.9)
+    previous = TrackingState(0.0, 0.0, 0.0, 10.0, 10.0)
+    good = TrackingState(0.1, 0.0, 0.0, 9.9, 9.9)
+    bad = TrackingState(0.1, 0.6, 0.7, 9.9, 9.9)
     args = dict(
         state=RobotState(linear_velocity=1.0),
         previous_state=RobotState(linear_velocity=1.0),
@@ -144,14 +151,20 @@ def test_timeout_and_rollover_have_negative_terms():
         "timeout_distance_weight": 10.0,
         "timeout_constant": 100.0,
         "success_bonus": 100.0,
+        "early_finish_bonus": 100.0,
+        "target_finish_seconds": 50.0,
         "time_penalty": 0.01,
+        "goal_slowdown_distance_m": 2.0,
+        "goal_max_speed_m_s": 0.2,
+        "goal_max_yaw_rate_rad_s": 0.3,
+        "endpoint_motion_weight": 1.0,
         "imu_stability_weight": 10.0,
         "imu_vibration_weight": 0.2,
         "imu_tilt_sigma_rad": 0.2,
         "imu_angular_rate_sigma_rad_s": 1.0,
         "imu_acceleration_change_sigma_m_s2": 2.0,
     }
-    tracking = TrackingState(0.0, 0.0, 0.0, 5.0)
+    tracking = TrackingState(0.0, 0.0, 0.0, 5.0, 5.0)
     _, terms = compute_reward(
         tracking,
         tracking,
@@ -189,16 +202,22 @@ def test_reward_prefers_stable_imu_and_desired_direction():
         "timeout_distance_weight": 10.0,
         "timeout_constant": 100.0,
         "success_bonus": 100.0,
+        "early_finish_bonus": 100.0,
+        "target_finish_seconds": 50.0,
         "time_penalty": 0.01,
+        "goal_slowdown_distance_m": 2.0,
+        "goal_max_speed_m_s": 0.2,
+        "goal_max_yaw_rate_rad_s": 0.3,
+        "endpoint_motion_weight": 1.0,
         "imu_stability_weight": 10.0,
         "imu_vibration_weight": 0.2,
         "imu_tilt_sigma_rad": 0.2,
         "imu_angular_rate_sigma_rad_s": 1.0,
         "imu_acceleration_change_sigma_m_s2": 2.0,
     }
-    previous_tracking = TrackingState(0.0, 0.0, 0.0, 10.0)
-    aligned = TrackingState(0.1, 0.0, 0.0, 9.9)
-    misaligned = TrackingState(0.1, 0.0, 1.0, 9.9)
+    previous_tracking = TrackingState(0.0, 0.0, 0.0, 10.0, 10.0)
+    aligned = TrackingState(0.1, 0.0, 0.0, 9.9, 9.9)
+    misaligned = TrackingState(0.1, 0.0, 1.0, 9.9, 9.9)
     previous_state = RobotState(accel_z=9.81)
     stable_state = RobotState(linear_velocity=1.0, accel_z=9.81)
     unstable_state = RobotState(
@@ -239,3 +258,136 @@ def test_reward_prefers_stable_imu_and_desired_direction():
     assert stable_terms["imu_stability"] > unstable_terms["imu_stability"]
     assert stable_terms["imu_vibration"] > unstable_terms["imu_vibration"]
     assert stable_terms["direction"] > unstable_terms["direction"]
+
+
+def test_goal_requires_endpoint_accuracy_low_motion_and_low_tilt():
+    config = {
+        "goal_tolerance_m": 0.45,
+        "goal_lateral_tolerance_m": 0.25,
+        "goal_heading_tolerance_deg": 12.0,
+        "goal_max_speed_m_s": 0.2,
+        "goal_max_yaw_rate_rad_s": 0.3,
+        "goal_max_tilt_deg": 10.0,
+    }
+    accurate = TrackingState(29.8, 0.1, np.deg2rad(5.0), 0.2, 0.22)
+    settled = RobotState(
+        linear_velocity=0.1,
+        yaw_rate=0.1,
+        roll=np.deg2rad(3.0),
+        pitch=np.deg2rad(4.0),
+    )
+    assert goal_reached(accurate, settled, config)
+    assert not goal_reached(
+        TrackingState(30.0, 0.1, 0.0, 0.0, 1.0), settled, config
+    )
+    assert not goal_reached(accurate, RobotState(linear_velocity=0.5), config)
+    assert not goal_reached(
+        accurate, RobotState(roll=np.deg2rad(15.0)), config
+    )
+
+
+def test_reward_adds_more_points_for_earlier_finish():
+    config = {
+        "progress_weight": 20.0,
+        "rough_progress_weight": 50.0,
+        "alignment_weight": 16.0,
+        "lateral_weight": 0.8,
+        "heading_weight": 0.2,
+        "direction_weight": 1.0,
+        "smoothness_weight": 0.2,
+        "sigma_lateral_m": 0.3,
+        "sigma_heading_rad": 0.35,
+        "stuck_progress_m": 0.01,
+        "stuck_penalty": 10.0,
+        "rollover_threshold_deg": 30.0,
+        "rollover_weight": 20.0,
+        "timeout_distance_weight": 10.0,
+        "timeout_constant": 100.0,
+        "success_bonus": 100.0,
+        "early_finish_bonus": 100.0,
+        "target_finish_seconds": 50.0,
+        "time_penalty": 0.01,
+        "imu_stability_weight": 10.0,
+        "imu_vibration_weight": 0.2,
+        "imu_tilt_sigma_rad": 0.2,
+        "imu_angular_rate_sigma_rad_s": 1.0,
+        "imu_acceleration_change_sigma_m_s2": 2.0,
+        "goal_slowdown_distance_m": 2.0,
+        "goal_max_speed_m_s": 0.2,
+        "goal_max_yaw_rate_rad_s": 0.3,
+        "endpoint_motion_weight": 1.0,
+    }
+    previous = TrackingState(29.7, 0.0, 0.0, 0.3, 0.3)
+    current = TrackingState(29.8, 0.0, 0.0, 0.2, 0.2)
+    common = dict(
+        previous=previous,
+        current=current,
+        state=RobotState(linear_velocity=0.1),
+        previous_state=RobotState(linear_velocity=0.1),
+        action=[0.0, 0.0],
+        previous_action=[0.0, 0.0],
+        action_before_previous=[0.0, 0.0],
+        dt=0.1,
+        reward_config=config,
+        curriculum_level=1.0,
+        timed_out=False,
+        succeeded=True,
+    )
+    early_reward, early_terms = compute_reward(elapsed=40.0, **common)
+    late_reward, late_terms = compute_reward(elapsed=55.0, **common)
+    assert early_terms["early_finish"] == 20.0
+    assert late_terms["early_finish"] == 0.0
+    assert early_reward > late_reward
+
+
+def test_endpoint_motion_penalty_encourages_smooth_stop():
+    config = {
+        "progress_weight": 0.0,
+        "rough_progress_weight": 0.0,
+        "alignment_weight": 0.0,
+        "lateral_weight": 0.0,
+        "heading_weight": 0.0,
+        "direction_weight": 0.0,
+        "smoothness_weight": 0.0,
+        "sigma_lateral_m": 0.3,
+        "sigma_heading_rad": 0.35,
+        "stuck_progress_m": 0.0,
+        "stuck_penalty": 0.0,
+        "rollover_threshold_deg": 30.0,
+        "rollover_weight": 0.0,
+        "timeout_distance_weight": 0.0,
+        "timeout_constant": 0.0,
+        "success_bonus": 0.0,
+        "early_finish_bonus": 0.0,
+        "target_finish_seconds": 50.0,
+        "time_penalty": 0.0,
+        "imu_stability_weight": 0.0,
+        "imu_vibration_weight": 0.0,
+        "imu_tilt_sigma_rad": 0.2,
+        "imu_angular_rate_sigma_rad_s": 1.0,
+        "imu_acceleration_change_sigma_m_s2": 2.0,
+        "goal_slowdown_distance_m": 2.0,
+        "goal_max_speed_m_s": 0.2,
+        "goal_max_yaw_rate_rad_s": 0.3,
+        "endpoint_motion_weight": 1.0,
+    }
+    previous = TrackingState(29.0, 0.0, 0.0, 1.0, 1.0)
+    current = TrackingState(29.1, 0.0, 0.0, 0.9, 0.9)
+    common = dict(
+        previous=previous,
+        current=current,
+        previous_state=RobotState(),
+        action=[0.0, 0.0],
+        previous_action=[0.0, 0.0],
+        action_before_previous=[0.0, 0.0],
+        dt=0.1,
+        elapsed=10.0,
+        reward_config=config,
+        curriculum_level=1.0,
+        timed_out=False,
+        succeeded=False,
+    )
+    _, smooth_terms = compute_reward(state=RobotState(linear_velocity=0.1), **common)
+    _, fast_terms = compute_reward(state=RobotState(linear_velocity=0.7), **common)
+    assert smooth_terms["endpoint_motion"] == 0.0
+    assert fast_terms["endpoint_motion"] < 0.0
