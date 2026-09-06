@@ -1,9 +1,9 @@
-# Nino Robot — ROS 2 Jazzy, Gazebo Sim, and torque control
+# Nino Robot — ROS 2 Jazzy, Gazebo Sim, sensors, and torque control
 
 This ROS 2 workspace contains the Nino differential-drive AMR description,
-Gazebo Sim Harmonic world, and wheel-torque control stack. The robot spawns at
-world pose `0 0 0` and can be driven through `/cmd_vel` or direct torque
-commands.
+Gazebo Sim Harmonic world, wheel-torque control stack, IMU, wheel encoders, and
+2D lidar. The robot spawns at world pose `0 0 0` and can be driven through
+`/cmd_vel` or direct torque commands.
 
 The simulator uses this control path:
 
@@ -56,7 +56,7 @@ sudo apt install ros-jazzy-ros-gz ros-jazzy-xacro \
   ros-jazzy-robot-state-publisher ros-jazzy-teleop-twist-keyboard \
   ros-jazzy-gz-ros2-control ros-jazzy-controller-manager \
   ros-jazzy-effort-controllers \
-  ros-jazzy-joint-state-broadcaster ros-jazzy-ros2controlcli \
+  ros-jazzy-joint-state-broadcaster ros-jazzy-ros2controlcli ros-jazzy-rviz2 \
   python3-colcon-common-extensions
 ```
 
@@ -82,6 +82,16 @@ colcon build --symlink-install
 source install/setup.bash
 ros2 launch nino_description sim.launch.py
 ```
+
+To open the sensor view and print all three sensors in the launch terminal:
+
+```bash
+ros2 launch nino_description sim.launch.py rviz:=true sensor_monitor:=true
+```
+
+RViz displays the lidar scan, robot, encoder odometry, and TF tree. The terminal
+monitor prints IMU vectors, left/right encoder position and velocity, lidar
+sample count, nearest range, and the received rate for every source.
 
 For a server-only run:
 
@@ -113,6 +123,43 @@ right_wheel_joint/effort
 
 The controller's input is a `std_msgs/msg/Float64MultiArray` ordered as
 `[left_wheel_joint, right_wheel_joint]`.
+
+## View IMU, encoder, and lidar data
+
+The simulated sensors use standard ROS 2 messages and Linorobot2 topic names:
+
+| Sensor | Topic | Type | Frame/rate |
+|---|---|---|---|
+| IMU | `/imu/data` | `sensor_msgs/msg/Imu` | `imu_link`, 50 Hz |
+| Wheel encoders | `/joint_states` | `sensor_msgs/msg/JointState` | left/right joints, 500 Hz |
+| 2D lidar | `/scan` | `sensor_msgs/msg/LaserScan` | `laser`, 10 Hz |
+
+View each complete message:
+
+```bash
+ros2 topic echo /imu/data
+ros2 topic echo /joint_states
+ros2 topic echo /scan
+```
+
+Or view all three as a compact live summary:
+
+```bash
+ros2 run nino_control sensor_monitor --ros-args -p use_sim_time:=true
+```
+
+Check that data is flowing at the expected rates:
+
+```bash
+ros2 topic hz /imu/data
+ros2 topic hz /joint_states
+ros2 topic hz /scan
+```
+
+In `/joint_states`, `position` is the encoder angle in radians and `velocity`
+is radians per second. Match values to `left_wheel_joint` and
+`right_wheel_joint` using the same array index in `name`, `position`, and
+`velocity`.
 
 ## Drive with `/cmd_vel`
 
@@ -227,11 +274,30 @@ ros2 launch nino_description sim.launch.py linorobot2_mode:=true
 
 In this mode Nino publishes `/odom/unfiltered` and does not publish
 `odom -> base_footprint`, avoiding duplicate `/odom` publishers or TF sources
-when Linorobot2's `ekf_filter_node` runs. Use the `jazzy` branch of
-[Linorobot2](https://github.com/linorobot/linorobot2), select its 2WD base
-configuration, and keep its standard `cmd_vel`, `odom`, `base_footprint`, and
-`base_link` names. A lidar `/scan` and normally IMU `/imu/data` must be added
-before running its navigation stack.
+when Linorobot2's `ekf_filter_node` runs. The IMU and lidar remain available on
+`/imu/data` and `/scan`. Use the `jazzy` branch of
+[Linorobot2](https://github.com/linorobot/linorobot2/tree/jazzy), select its 2WD
+base configuration, and keep its standard `cmd_vel`, `odom`,
+`base_footprint`, `base_link`, `imu_link`, and `laser` names.
+
+Start Nino in the Linorobot2-compatible mode:
+
+```bash
+ros2 launch nino_description sim.launch.py linorobot2_mode:=true rviz:=true sensor_monitor:=true
+```
+
+Then run Linorobot2's Jazzy EKF (from a terminal where Linorobot2 is built and
+sourced):
+
+```bash
+ros2 run robot_localization ekf_node --ros-args \
+  --params-file "$(ros2 pkg prefix --share linorobot2_base)/config/ekf.yaml" \
+  -p use_sim_time:=true -r odometry/filtered:=/odom
+```
+
+Do not run Linorobot2's full Gazebo launch at the same time as Nino's simulation;
+that launch creates another robot and another Gazebo instance. Run its EKF and
+navigation/SLAM nodes against Nino's standard topics instead.
 
 ## Moving from Gazebo to Xiaomi CyberGear hardware
 
@@ -252,9 +318,11 @@ need to know whether the joint backend is Gazebo or CyberGear CAN hardware.
 
 The supplied CAD masses, centers of mass, and inertia tensors are retained.
 Left/right inertial and contact properties are symmetric; the effective wheel
-separation uses the measured tyre contact centers. Rolling surfaces use exact
-measured cylinders for stable contact. The caster bracket collision uses its
-CAD mesh in the same frame as the visual mesh, keeping the open fork clear.
+separation uses the measured tyre contact centers. The chassis collision uses
+the same `base_link.STL`, origin, and scale as its visual, so their surfaces are
+exactly aligned. Rolling surfaces use exact measured cylinders for stable
+contact. The caster bracket collision uses its CAD mesh in the same frame as
+the visual mesh, keeping the open fork clear.
 The modeled moving mass is `4.6888672492 kg`; its aggregate center of mass in
 `base_footprint` is approximately `[0.056018, 0.0, 0.127546] m`. Every inertia
 tensor is positive definite and satisfies the rigid-body triangle conditions.

@@ -47,12 +47,11 @@
       </geometry>
       <material name="chassis_blue"/>
     </visual>
-    <!-- A primitive collision shape is smoother and more deterministic than
-         the 61k-triangle visual mesh while retaining the measured envelope. -->
+    <!-- Use the CAD chassis in the identical frame for exact visual/collision
+         alignment. Do not add an origin offset or an independent scale here. -->
     <collision>
-      <origin xyz="0.06 0 0.05" rpy="0 0 0"/>
       <geometry>
-        <box size="0.48 0.34 0.14"/>
+        <mesh filename="package://nino_description/meshes/base_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -62,6 +61,109 @@
     <child link="base_link"/>
     <origin xyz="0 0 ${drive_wheel_radius}" rpy="0 0 0"/>
   </joint>
+
+  <!--
+    Sensor names and topics intentionally match Linorobot2 Jazzy:
+      imu_link -> /imu/data
+      laser    -> /scan
+    Their fixed joints are published by robot_state_publisher.
+  -->
+  <link name="imu_link"/>
+  <joint name="imu_to_base_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0.05 0 0.10" rpy="0 0 0"/>
+  </joint>
+
+  <link name="laser">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.10"/>
+      <inertia ixx="0.00004" ixy="0" ixz="0"
+               iyy="0.00004" iyz="0" izz="0.00007"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <cylinder radius="0.0375" length="0.05"/>
+      </geometry>
+      <material name="sensor_green">
+        <color rgba="0.003 0.639 0.223 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.0375" length="0.05"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="laser_to_base_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser"/>
+    <origin xyz="0.10 0 0.18" rpy="0 0 0"/>
+  </joint>
+
+  <gazebo>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+  </gazebo>
+
+  <gazebo reference="imu_link">
+    <sensor name="imu_sensor" type="imu">
+      <topic>imu/data</topic>
+      <update_rate>50</update_rate>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0</mean><stddev>0.0002</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>0.0002</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>0.0002</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0</mean><stddev>0.017</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>0.017</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>0.017</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="laser">
+    <sensor name="gpu_lidar" type="gpu_lidar">
+      <topic>scan</topic>
+      <update_rate>10</update_rate>
+      <always_on>true</always_on>
+      <visualize>true</visualize>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-${pi}</min_angle>
+            <max_angle>${pi}</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>1</samples>
+            <resolution>1</resolution>
+            <min_angle>0</min_angle>
+            <max_angle>0</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>0.08</min>
+          <max>12.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0</mean>
+          <stddev>0.005</stddev>
+        </noise>
+      </lidar>
+    </sensor>
+  </gazebo>
 
   <xacro:macro name="drive_wheel" params="side y mesh com_z collision_z">
     <link name="${side}_wheel_link">
@@ -231,6 +333,21 @@
       <state_interface name="velocity"/>
       <state_interface name="effort"/>
     </joint>
+
+    <!-- Register the Gazebo IMU with ros2_control as well. This keeps the
+         hardware model complete; /imu/data is still published by ros_gz_bridge. -->
+    <sensor name="imu_sensor">
+      <state_interface name="orientation.x"/>
+      <state_interface name="orientation.y"/>
+      <state_interface name="orientation.z"/>
+      <state_interface name="orientation.w"/>
+      <state_interface name="angular_velocity.x"/>
+      <state_interface name="angular_velocity.y"/>
+      <state_interface name="angular_velocity.z"/>
+      <state_interface name="linear_acceleration.x"/>
+      <state_interface name="linear_acceleration.y"/>
+      <state_interface name="linear_acceleration.z"/>
+    </sensor>
 
     <!-- Passive caster joints are exported for complete /joint_states. -->
     <joint name="caster_left_swivel_joint">

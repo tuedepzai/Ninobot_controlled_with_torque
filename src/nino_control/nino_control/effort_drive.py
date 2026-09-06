@@ -333,6 +333,11 @@ def main(args=None) -> None:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except RuntimeError:
+        # A subscription can be invalidated between SIGINT and executor exit.
+        # Preserve real runtime failures while treating that shutdown race as clean.
+        if rclpy.ok():
+            raise
     finally:
         if rclpy.ok():
             node.stop()

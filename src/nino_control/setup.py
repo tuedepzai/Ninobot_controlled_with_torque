@@ -25,6 +25,7 @@ setup(
     entry_points={
         "console_scripts": [
             "effort_drive = nino_control.effort_drive:main",
+            "sensor_monitor = nino_control.sensor_monitor:main",
         ],
     },
 )

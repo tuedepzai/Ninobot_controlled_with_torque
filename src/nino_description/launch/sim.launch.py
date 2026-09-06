@@ -22,8 +22,8 @@ from launch.substitutions import (
 )
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
 from launch_ros.substitutions import FindPackagePrefix
+from launch_ros.substitutions import FindPackageShare
 
 
 SNAP_DESKTOP_ENVIRONMENT = (
@@ -69,6 +69,8 @@ def generate_launch_description():
     effort_drive_config = PathJoinSubstitution(
         [control_share, "config", "effort_drive.yaml"]
     )
+    rviz_config = PathJoinSubstitution([package_share, "rviz", "sensors.rviz"])
+    bridge_config = PathJoinSubstitution([package_share, "config", "bridge.yaml"])
     robot_description = ParameterValue(Command(["xacro ", xacro_file]), value_type=str)
 
     clean_gz_sim = PathJoinSubstitution(
@@ -189,9 +191,23 @@ def generate_launch_description():
             default_value="true",
             description="Start the safe cmd_vel and torque adapter",
         ),
+        DeclareLaunchArgument(
+            "rviz",
+            default_value="false",
+            description="Open RViz with robot, lidar, odometry, and TF displays",
+        ),
+        DeclareLaunchArgument(
+            "sensor_monitor",
+            default_value="false",
+            description="Print live IMU, encoder, and lidar summaries",
+        ),
         SetEnvironmentVariable(
             "GZ_SIM_RESOURCE_PATH",
-            [package_share, "/..:", EnvironmentVariable("GZ_SIM_RESOURCE_PATH", default_value="")],
+            [
+                package_share,
+                "/..:",
+                EnvironmentVariable("GZ_SIM_RESOURCE_PATH", default_value=""),
+            ],
         ),
         SetEnvironmentVariable(
             "GZ_SIM_SYSTEM_PLUGIN_PATH",
@@ -209,7 +225,8 @@ def generate_launch_description():
         *[UnsetEnvironmentVariable(name) for name in SNAP_DESKTOP_ENVIRONMENT],
         SetEnvironmentVariable(
             "XDG_DATA_DIRS",
-            "/usr/share/ubuntu:/usr/share/gnome:/usr/local/share:/usr/share:/var/lib/snapd/desktop",
+            "/usr/share/ubuntu:/usr/share/gnome:/usr/local/share:"
+            "/usr/share:/var/lib/snapd/desktop",
         ),
         # Gazebo's bundled Qt 5 dialogs emit harmless binding-loop diagnostics.
         SetEnvironmentVariable("QT_LOGGING_RULES", "*.warning=false"),
@@ -237,9 +254,24 @@ def generate_launch_description():
             executable="parameter_bridge",
             name="ros_gz_bridge",
             output="screen",
-            arguments=[
-                "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
-            ],
+            parameters=[{"config_file": bridge_config}],
+        ),
+        Node(
+            package="rviz2",
+            executable="rviz2",
+            name="rviz2",
+            output="screen",
+            arguments=["-d", rviz_config],
+            parameters=[{"use_sim_time": True}],
+            condition=IfCondition(LaunchConfiguration("rviz")),
+        ),
+        Node(
+            package="nino_control",
+            executable="sensor_monitor",
+            name="sensor_monitor",
+            output="screen",
+            parameters=[{"use_sim_time": True}],
+            condition=IfCondition(LaunchConfiguration("sensor_monitor")),
         ),
         RegisterEventHandler(
             OnProcessExit(target_action=spawn_nino, on_exit=[controller_spawner])
