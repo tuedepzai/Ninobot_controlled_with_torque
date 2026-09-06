@@ -5,6 +5,10 @@ Gazebo Sim Harmonic world, wheel-torque control stack, IMU, wheel encoders, and
 2D lidar. The robot spawns at world pose `0 0 0` and can be driven through
 `/cmd_vel` or direct torque commands.
 
+The `Add_rl` branch also includes CUDA-prioritized PPO training, evaluation,
+and a Nav2-aware wheel-torque policy. See the complete Vietnamese guide:
+[src/nino_rl/README_VI.md](src/nino_rl/README_VI.md).
+
 The simulator uses this control path:
 
 ```text

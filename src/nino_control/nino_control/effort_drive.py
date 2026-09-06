@@ -9,6 +9,7 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
+from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
 
 from nino_control.kinematics import (
@@ -131,6 +132,7 @@ class EffortDrive(Node):
         self.create_subscription(
             JointState, "/joint_states", self._joint_state_callback, wheel_state_qos
         )
+        self.create_service(Trigger, "/reset_wheel_odometry", self._reset_odometry)
 
         now_ns = self.get_clock().now().nanoseconds
         self.last_control_ns = now_ns
@@ -155,6 +157,24 @@ class EffortDrive(Node):
             "Effort drive ready: /cmd_vel and /wheel_torque_commands -> "
             "/wheel_effort_controller/commands"
         )
+
+    def _reset_odometry(self, _request, response):
+        """Reset the local wheel-integrated pose after a Gazebo episode reset."""
+        self.x = 0.0
+        self.y = 0.0
+        self.yaw = 0.0
+        self.requested_linear = 0.0
+        self.requested_angular = 0.0
+        self.override_torque = [0.0, 0.0]
+        self.applied_effort = [0.0, 0.0]
+        self.target_velocity = [0.0, 0.0]
+        self.error_integral = [0.0, 0.0]
+        self.last_cmd_ns = 0
+        self.last_torque_ns = 0
+        self.last_control_ns = self.get_clock().now().nanoseconds
+        response.success = True
+        response.message = "Wheel odometry and controller state reset to zero"
+        return response
 
     def _cmd_vel_callback(self, message: Twist) -> None:
         if not isfinite(message.linear.x) or not isfinite(message.angular.z):

@@ -1,0 +1,10 @@
+# Install this file inside a venv created with --system-site-packages so the
+# ROS 2 Jazzy Python modules remain visible.
+torch>=2.7
+setuptools>=77,<80
+numpy>=1.26,<2.0
+gymnasium>=1.0,<2.0
+stable-baselines3>=2.4,<3.0
+tensorboard>=2.9
+tqdm>=4.66
+PyYAML>=6.0

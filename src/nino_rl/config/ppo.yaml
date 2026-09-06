@@ -1,0 +1,65 @@
+seed: 42
+device: cuda
+control_hz: 10.0
+max_episode_seconds: 35.0
+max_wheel_torque_nm: 4.0
+goal_tolerance_m: 0.45
+off_path_limit_m: 1.50
+rollover_limit_deg: 45.0
+lidar_collision_m: 0.10
+sensor_timeout_seconds: 5.0
+
+path:
+  lookahead_m: [0.5, 1.0, 2.0, 3.5, 5.0, 7.5, 10.0, 12.5, 15.0]
+  default_goal_x_m: 30.0
+  point_spacing_m: 0.25
+
+curriculum:
+  enabled: true
+  # Fractions of total training steps at which a harder cable-bump section starts.
+  stage_fractions: [0.0, 0.20, 0.50, 0.80]
+  goal_x_m: [4.0, 10.0, 18.0, 30.0]
+
+domain_randomization:
+  enabled: true
+  traction_scale: [0.30, 1.00]
+  motor_delay_ms: [10.0, 40.0]
+  torque_noise_std_nm: [0.00, 0.12]
+  position_noise_std_m: [0.04, 0.10]
+  heading_noise_std_deg: [0.3, 2.0]
+  position_bias_m: [0.00, 0.01]
+  heading_bias_deg: [-1.0, 1.0]
+  observation_dropout: [0.00, 0.05]
+  path_lateral_amplitude_m: [0.00, 0.60]
+
+reward:
+  progress_weight: 20.0
+  alignment_weight: 16.0
+  lateral_weight: 0.8
+  heading_weight: 0.2
+  smoothness_weight: 0.2
+  sigma_lateral_m: 0.30
+  sigma_heading_rad: 0.35
+  rough_progress_weight: 50.0
+  stuck_penalty: 10.0
+  stuck_progress_m: 0.01
+  rollover_weight: 20.0
+  rollover_threshold_deg: 30.0
+  timeout_distance_weight: 10.0
+  timeout_constant: 100.0
+  time_penalty: 0.01
+  success_bonus: 100.0
+
+ppo:
+  learning_rate: 0.0005
+  gamma: 0.99
+  gae_lambda: 0.95
+  n_steps: 2048
+  batch_size: 256
+  n_epochs: 10
+  clip_range: 0.2
+  ent_coef: 0.001
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  policy_layers: [256, 256]
+  activation: elu
