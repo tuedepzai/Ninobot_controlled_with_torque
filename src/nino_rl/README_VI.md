@@ -152,10 +152,17 @@ rl_runs/YYYYMMDD-HHMMSS/
 └── tensorboard/
 ```
 
-Theo dõi reward/loss/GPU trong lúc train (mở thêm terminal hoặc trình duyệt tại `http://localhost:6006`):
+Theo dõi reward/loss trong lúc train ở một terminal riêng:
 
 ```bash
-tensorboard --logdir rl_runs
+cd /home/tue/ninorobot
+source .venv/bin/activate
+python -m tensorboard.main --logdir /home/tue/ninorobot/rl_runs
+```
+
+Mở `http://localhost:6006`. Cảnh báo `TensorFlow installation not found` không ảnh hưởng vì PPO ghi log bằng PyTorch. Theo dõi GPU trong **một terminal khác**:
+
+```bash
 watch -n 1 nvidia-smi
 ```
 

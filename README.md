@@ -160,6 +160,25 @@ ros2 topic hz /joint_states
 ros2 topic hz /scan
 ```
 
+Plot the IMU angular velocity in real time:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+ros2 run rqt_plot rqt_plot -e \
+  /imu/data/angular_velocity/x:y:z
+```
+
+`QLayout::removeWidget: Cannot remove a null widget` is a harmless startup
+warning from `rqt_plot` 1.4.5 on Jazzy. If the plot window opens, it can be
+ignored. If no curves appear, first verify the sensor with
+`ros2 topic echo /imu/data --once` and `ros2 topic hz /imu/data`.
+
+To capture an exact 30-second interval, run:
+
+```bash
+timeout --signal=INT 30s ros2 bag record -o imu_30s /imu/data
+```
+
 In `/joint_states`, `position` is the encoder angle in radians and `velocity`
 is radians per second. Match values to `left_wheel_joint` and
 `right_wheel_joint` using the same array index in `name`, `position`, and
