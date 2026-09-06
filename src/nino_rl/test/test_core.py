@@ -1,4 +1,5 @@
 from math import pi
+from pathlib import Path
 
 import numpy as np
 
@@ -10,7 +11,9 @@ from nino_rl.core import (
     catmull_rom_path,
     compute_reward,
     goal_reached,
+    is_wrong_direction,
     lidar_sectors,
+    load_config,
     make_observation,
     quaternion_to_euler,
     wrap_angle,
@@ -391,3 +394,60 @@ def test_endpoint_motion_penalty_encourages_smooth_stop():
     _, fast_terms = compute_reward(state=RobotState(linear_velocity=0.7), **common)
     assert smooth_terms["endpoint_motion"] == 0.0
     assert fast_terms["endpoint_motion"] < 0.0
+
+
+def test_wrong_direction_uses_plan_heading_and_reverse_speed():
+    config = {
+        "wrong_direction_heading_deg": 60.0,
+        "wrong_direction_reverse_speed_m_s": 0.1,
+    }
+    aligned = TrackingState(1.0, 0.0, np.deg2rad(10.0), 9.0, 9.0)
+    turned_away = TrackingState(1.0, 0.0, np.deg2rad(70.0), 9.0, 9.0)
+    assert not is_wrong_direction(aligned, RobotState(linear_velocity=0.2), config)
+    assert is_wrong_direction(
+        turned_away, RobotState(linear_velocity=0.2), config
+    )
+    assert is_wrong_direction(
+        aligned, RobotState(linear_velocity=-0.2), config
+    )
+
+
+def test_reward_encourages_direction_recovery_and_penalizes_failed_attempt():
+    full_config = load_config(Path(__file__).parents[1] / "config" / "ppo.yaml")
+    reward_config = {
+        **full_config["reward"],
+        "target_finish_seconds": full_config["target_finish_seconds"],
+        "goal_max_speed_m_s": full_config["goal_max_speed_m_s"],
+        "goal_max_yaw_rate_rad_s": full_config["goal_max_yaw_rate_rad_s"],
+    }
+    previous = TrackingState(1.0, 0.0, 0.5, 9.0, 9.0)
+    corrected = TrackingState(1.1, 0.0, 0.1, 8.9, 8.9)
+    worsened = TrackingState(1.1, 0.0, 0.9, 8.9, 8.9)
+    common = dict(
+        previous=previous,
+        state=RobotState(linear_velocity=0.3),
+        previous_state=RobotState(linear_velocity=0.3),
+        action=[0.2, 0.1],
+        previous_action=[0.1, 0.1],
+        action_before_previous=[0.0, 0.0],
+        dt=0.1,
+        elapsed=5.0,
+        reward_config=reward_config,
+        curriculum_level=1.0,
+        timed_out=False,
+        succeeded=False,
+    )
+    corrected_reward, corrected_terms = compute_reward(
+        current=corrected, wrong_direction=False, **common
+    )
+    worsened_reward, worsened_terms = compute_reward(
+        current=worsened, wrong_direction=False, **common
+    )
+    failed_reward, failed_terms = compute_reward(
+        current=worsened, wrong_direction=True, **common
+    )
+    assert corrected_terms["direction_correction"] > 0.0
+    assert worsened_terms["direction_correction"] < 0.0
+    assert corrected_reward > worsened_reward
+    assert failed_terms["wrong_direction_failure"] == -100.0
+    assert failed_reward < worsened_reward

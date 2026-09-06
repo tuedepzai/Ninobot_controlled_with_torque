@@ -68,6 +68,10 @@ def main() -> None:
                     self.reward_terms.setdefault(name, []).append(float(value))
                 metrics = info.get("episode_metrics")
                 if metrics is not None:
+                    self.logger.record(
+                        "episode/wrong_direction_failure",
+                        float(metrics["termination"] == "wrong_direction"),
+                    )
                     for name in (
                         "success",
                         "finished_within_target_time",

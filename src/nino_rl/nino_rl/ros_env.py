@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from math import degrees
+from math import ceil, degrees
 from threading import Event, Thread
 from time import sleep
 
@@ -20,6 +20,7 @@ from nino_rl.core import (
     catmull_rom_path,
     compute_reward,
     goal_reached,
+    is_wrong_direction,
     make_observation,
     metrics_dict,
 )
@@ -57,7 +58,16 @@ class NinoGazeboEnv(gym.Env):
         self.ros.wait_for_sensors(self.sensor_timeout)
 
         self.global_steps = 0
+        self.attempt_number = 0
         self.episode_steps = 0
+        self.wrong_direction_steps = 0
+        self.wrong_direction_required_steps = max(
+            1,
+            ceil(
+                float(config["wrong_direction_hold_seconds"])
+                / self.control_dt
+            ),
+        )
         self._randomization = {}
         self.path = self._make_curriculum_path()
         self.previous_action = np.zeros(2, dtype=np.float32)
@@ -156,7 +166,9 @@ class NinoGazeboEnv(gym.Env):
         super().reset(seed=seed)
         self.ros.reset_episode()
         self.ros.wait_for_sensors(self.sensor_timeout)
+        self.attempt_number += 1
         self.episode_steps = 0
+        self.wrong_direction_steps = 0
         self.previous_action.fill(0.0)
         self.action_before_previous.fill(0.0)
         self._last_noisy_state = None
@@ -179,6 +191,7 @@ class NinoGazeboEnv(gym.Env):
         )
         stage, level, goal_x = self._curriculum_stage()
         return observation, {
+            "attempt": self.attempt_number,
             "curriculum_stage": stage + 1,
             "curriculum_level": level,
             "goal_x_m": goal_x,
@@ -211,8 +224,21 @@ class NinoGazeboEnv(gym.Env):
         )
         off_path = abs(tracking.lateral_error) >= float(self.config["off_path_limit_m"])
         collision = np.isfinite(min_lidar) and min_lidar <= float(self.config["lidar_collision_m"])
+        wrong_direction_sample = (
+            elapsed >= float(self.config["wrong_direction_grace_seconds"])
+            and is_wrong_direction(tracking, truth, self.config)
+        )
+        if wrong_direction_sample:
+            self.wrong_direction_steps += 1
+        else:
+            self.wrong_direction_steps = 0
+        wrong_direction = (
+            self.wrong_direction_steps >= self.wrong_direction_required_steps
+        )
         timed_out = self.episode_steps >= self.max_steps
-        terminated = bool(succeeded or rolled or off_path or collision)
+        terminated = bool(
+            succeeded or rolled or wrong_direction or off_path or collision
+        )
         truncated = bool(timed_out and not terminated)
         _, level, _ = self._curriculum_stage()
         reward, reward_terms = compute_reward(
@@ -236,6 +262,7 @@ class NinoGazeboEnv(gym.Env):
             level,
             timed_out=truncated,
             succeeded=succeeded,
+            wrong_direction=wrong_direction,
         )
         self.episode_return += reward
         self.abs_lateral_sum += abs(tracking.lateral_error)
@@ -266,6 +293,7 @@ class NinoGazeboEnv(gym.Env):
         self.previous_action = action.copy()
 
         info = {
+            "attempt": self.attempt_number,
             "reward_terms": reward_terms,
             "applied_torque_nm": torque.tolist(),
             **metrics_dict(tracking, truth, elapsed, succeeded),
@@ -274,6 +302,7 @@ class NinoGazeboEnv(gym.Env):
             count = max(1, self.episode_steps)
             info["episode_metrics"] = {
                 **metrics_dict(tracking, truth, elapsed, succeeded),
+                "attempt": self.attempt_number,
                 "return": self.episode_return,
                 "mean_abs_lateral_error_m": self.abs_lateral_sum / count,
                 "mean_abs_roll_deg": self.abs_roll_sum / count,
@@ -296,8 +325,11 @@ class NinoGazeboEnv(gym.Env):
                 ),
                 "final_speed_m_s": truth.linear_velocity,
                 "final_yaw_rate_rad_s": truth.yaw_rate,
+                "wrong_direction_duration_seconds": (
+                    self.wrong_direction_steps * self.control_dt
+                ),
                 "termination": (
-                    "success" if succeeded else "rollover" if rolled else "off_path" if off_path else "collision" if collision else "timeout"
+                    "success" if succeeded else "rollover" if rolled else "wrong_direction" if wrong_direction else "off_path" if off_path else "collision" if collision else "timeout"
                 ),
             }
             self.ros.publish_torque(0.0, 0.0)

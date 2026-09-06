@@ -10,6 +10,10 @@ goal_heading_tolerance_deg: 12.0
 goal_max_speed_m_s: 0.20
 goal_max_yaw_rate_rad_s: 0.30
 goal_max_tilt_deg: 10.0
+wrong_direction_heading_deg: 60.0
+wrong_direction_reverse_speed_m_s: 0.10
+wrong_direction_grace_seconds: 1.0
+wrong_direction_hold_seconds: 0.5
 off_path_limit_m: 1.00
 rollover_limit_deg: 35.0
 lidar_collision_m: 0.10
@@ -44,6 +48,10 @@ reward:
   lateral_weight: 0.8
   heading_weight: 0.2
   direction_weight: 1.0
+  direction_correction_weight: 10.0
+  wrong_direction_weight: 2.0
+  reverse_weight: 4.0
+  wrong_direction_termination_penalty: 100.0
   smoothness_weight: 0.2
   sigma_lateral_m: 0.30
   sigma_heading_rad: 0.35

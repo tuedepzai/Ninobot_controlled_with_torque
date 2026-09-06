@@ -53,6 +53,9 @@ Reward IMU bổ sung gồm:
 - `imu_stability`: thưởng **tiến độ ổn định**, lớn nhất khi roll/pitch nhỏ, tốc độ quay quanh X/Y nhỏ và gia tốc thay đổi ít;
 - `imu_vibration`: phạt rung dựa trên gyro X/Y và độ thay đổi vector gia tốc giữa hai bước;
 - `direction`: thưởng tiến độ theo `max(0, cos(e_heading))`, lớn nhất khi robot tiến đúng hướng mong muốn;
+- `direction_correction`: thưởng khi sai số hướng giảm sau quyết định torque và phạt khi sai số tăng;
+- `wrong_way`/`reverse`: phạt quay ngược hướng đường hoặc chạy lùi;
+- `wrong_direction_failure`: phạt 100 điểm khi attempt bị hủy vì đi sai hướng liên tục;
 - `rollover`: phạt mạnh riêng khi roll/pitch vượt ngưỡng 30 độ.
 - `endpoint_motion`: trong 2 m cuối, phạt vận tốc thẳng/yaw-rate vượt ngưỡng để policy học giảm tốc và dừng êm;
 - `success`: thưởng 100 điểm khi xe thật sự ổn định tại endpoint;
@@ -66,7 +69,18 @@ Một episode chỉ thành công khi đồng thời thỏa tất cả điều ki
 - vận tốc thẳng không quá `0,20 m/s`, yaw-rate không quá `0,30 rad/s`;
 - roll và pitch đều không quá `10°`.
 
-Episode dừng ngay khi thành công, collision, lệch đường, rollover; hoặc bị truncate khi hết `60 s`. `target_finish_seconds: 50` là mốc tính thưởng về sớm, còn `max_episode_seconds: 60` là deadline cứng. Hai giá trị đều chỉnh được trong `config/ppo.yaml`.
+Episode dừng ngay khi thành công, đi sai hướng liên tục, collision, lệch đường hoặc rollover; episode bị truncate khi hết `60 s`. `target_finish_seconds: 50` là mốc tính thưởng về sớm, còn `max_episode_seconds: 60` là deadline cứng. Hai giá trị đều chỉnh được trong `config/ppo.yaml`.
+
+### Một episode là một attempt điều chỉnh hướng
+
+Chiều tiến mong muốn không bị gắn cứng vào trục `+X`: nó là thứ tự waypoint từ đầu đến cuối trong path huấn luyện hoặc `/plan` của Nav2. Mỗi chu kỳ 10 Hz thực hiện:
+
+1. đọc quaternion, angular velocity và linear acceleration từ IMU;
+2. đọc tốc độ encoder bánh trái/phải;
+3. tính sai số hướng so với tiếp tuyến của path và tạo observation 41 chiều;
+4. PPO chọn hai torque mới, sau đó reward đo xem quyết định đó làm xe thẳng lại hay lệch thêm.
+
+Nếu gờ làm lệch xe trong thời gian ngắn, attempt vẫn tiếp tục để policy học phục hồi. Attempt chỉ bị hủy và reset khi sai số hướng từ `60°` hoặc vận tốc lùi từ `0,10 m/s` tồn tại liên tục ít nhất `0,5 s`. Khoảng `1 s` đầu episode được miễn kiểm tra để Gazebo ổn định. Các ngưỡng tương ứng là `wrong_direction_*` trong `config/ppo.yaml`.
 
 Action là `Box([-1,-1], [1,1])`, nhân với giới hạn mặc định `4 N.m`, rồi phát lên `/wheel_torque_commands` theo thứ tự `[trái, phải]`. `effort_drive` vẫn giới hạn cứng tối đa `12 N.m`, slew-rate và timeout 0,25 s.
 
@@ -200,7 +214,7 @@ ros2 run nino_rl evaluate \
   --episodes 25 --randomized
 ```
 
-Output trong `rl_runs/evaluation/` gồm từng episode ở CSV và summary JSON: success rate, tỷ lệ thành công trước 50 s, thời gian thành công, khoảng cách cuối tới endpoint, vận tốc cuối, sai số ngang, roll/pitch, max tilt, angular-rate XY và độ thay đổi gia tốc IMU trung bình. Nên chỉ chuyển sang robot thật khi test deterministic và randomized đều ổn định, không rollover/collision và sai số phù hợp giới hạn cơ khí của bạn.
+Output trong `rl_runs/evaluation/` gồm từng attempt ở CSV và summary JSON: success rate, tỷ lệ hủy do sai hướng, số lượng từng nguyên nhân kết thúc, tỷ lệ thành công trước 50 s, thời gian thành công, khoảng cách cuối tới endpoint, vận tốc cuối, sai số ngang, roll/pitch, max tilt, angular-rate XY và độ thay đổi gia tốc IMU trung bình. Nên chỉ chuyển sang robot thật khi test deterministic và randomized đều ổn định, không rollover/collision và sai số phù hợp giới hạn cơ khí của bạn.
 
 ## 4. Chạy policy trong Gazebo
 

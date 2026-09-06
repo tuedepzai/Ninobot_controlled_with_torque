@@ -57,7 +57,7 @@ def main() -> None:
             metrics["episode"] = episode + 1
             rows.append(metrics)
             print(
-                f"Episode {episode + 1}: {metrics['termination']}, "
+                f"Attempt {metrics['attempt']}: {metrics['termination']}, "
                 f"t={metrics['time_seconds']:.1f}s, "
                 f"đúng hạn={metrics['finished_within_target_time']}, "
                 f"|e_y|={metrics['mean_abs_lateral_error_m']:.3f}m"
@@ -74,9 +74,17 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
     successful_rows = [row for row in rows if row["success"]]
+    termination_counts = {
+        name: sum(row["termination"] == name for row in rows)
+        for name in sorted({row["termination"] for row in rows})
+    }
     summary = {
         "episodes": len(rows),
+        "termination_counts": termination_counts,
         "success_rate": float(np.mean([row["success"] for row in rows])),
+        "wrong_direction_rate": float(
+            np.mean([row["termination"] == "wrong_direction" for row in rows])
+        ),
         "on_time_success_rate": float(
             np.mean([row["finished_within_target_time"] for row in rows])
         ),

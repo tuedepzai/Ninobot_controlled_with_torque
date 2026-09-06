@@ -193,6 +193,18 @@ def goal_reached(
     )
 
 
+def is_wrong_direction(
+    tracking: TrackingState, state: RobotState, config: Mapping[str, float]
+) -> bool:
+    """Return true when the robot faces away from the plan or drives backward."""
+    return (
+        abs(tracking.heading_error)
+        >= radians(float(config["wrong_direction_heading_deg"]))
+        or state.linear_velocity
+        <= -float(config["wrong_direction_reverse_speed_m_s"])
+    )
+
+
 def make_observation(
     state: RobotState,
     path: PathTracker,
@@ -255,6 +267,7 @@ def compute_reward(
     curriculum_level: float,
     timed_out: bool,
     succeeded: bool,
+    wrong_direction: bool = False,
 ) -> tuple[float, dict[str, float]]:
     """Combine both papers' rewards, adapted to differential wheel torque."""
     delta_s = current.path_s - previous.path_s
@@ -282,6 +295,15 @@ def compute_reward(
         * max(0.0, delta_s)
         * max(0.0, cos(current.heading_error))
     )
+    direction_correction = float(
+        reward_config.get("direction_correction_weight", 0.0)
+    ) * (abs(previous.heading_error) - abs(current.heading_error))
+    wrong_way = -float(reward_config.get("wrong_direction_weight", 0.0)) * max(
+        0.0, -cos(current.heading_error)
+    ) * dt
+    reverse = -float(reward_config.get("reverse_weight", 0.0)) * max(
+        0.0, -state.linear_velocity
+    ) * dt
     tilt_sigma = float(reward_config["imu_tilt_sigma_rad"])
     rate_sigma = float(reward_config["imu_angular_rate_sigma_rad_s"])
     acceleration_sigma = float(reward_config["imu_acceleration_change_sigma_m_s2"])
@@ -342,6 +364,11 @@ def compute_reward(
             + float(reward_config["timeout_constant"])
         )
     success = float(reward_config["success_bonus"]) if succeeded else 0.0
+    wrong_direction_failure = (
+        -float(reward_config.get("wrong_direction_termination_penalty", 0.0))
+        if wrong_direction
+        else 0.0
+    )
     early_finish = 0.0
     if succeeded:
         target_time = float(reward_config["target_finish_seconds"])
@@ -357,6 +384,9 @@ def compute_reward(
         "lateral": float(lateral),
         "heading": float(heading),
         "direction": float(direction),
+        "direction_correction": float(direction_correction),
+        "wrong_way": float(wrong_way),
+        "reverse": float(reverse),
         "imu_stability": float(imu_stability),
         "imu_vibration": float(imu_vibration),
         "endpoint_motion": float(endpoint_motion),
@@ -366,6 +396,7 @@ def compute_reward(
         "timeout": float(timeout),
         "time": float(time_cost),
         "success": float(success),
+        "wrong_direction_failure": float(wrong_direction_failure),
         "early_finish": float(early_finish),
     }
     return float(sum(terms.values())), terms

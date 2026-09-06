@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from math import cos, sin
+from math import ceil, cos, sin
 from pathlib import Path
 import sys
 from time import monotonic
@@ -18,6 +18,7 @@ from nino_rl.core import (
     OBSERVATION_SIZE,
     PathTracker,
     goal_reached,
+    is_wrong_direction,
     load_config,
     make_observation,
     quaternion_to_euler,
@@ -58,6 +59,15 @@ class PolicyNode(RosRobotInterface):
         self.last_tf_warning = 0.0
         self.path_started_at = None
         self.deadline_reported = False
+        self.wrong_direction_reported = False
+        self.wrong_direction_steps = 0
+        self.wrong_direction_required_steps = max(
+            1,
+            ceil(
+                float(self.config["wrong_direction_hold_seconds"])
+                * float(self.config["control_hz"])
+            ),
+        )
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.previous_action = np.zeros(2, dtype=np.float32)
@@ -123,6 +133,8 @@ class PolicyNode(RosRobotInterface):
         if self.path_started_at is None or goal_changed:
             self.path_started_at = monotonic()
             self.deadline_reported = False
+            self.wrong_direction_reported = False
+            self.wrong_direction_steps = 0
         self.get_logger().info(f"Using {len(points)} waypoints from {self.path_source}")
 
     def _control(self) -> None:
@@ -143,9 +155,23 @@ class PolicyNode(RosRobotInterface):
         timed_out = monotonic() - self.path_started_at >= float(
             self.config["max_episode_seconds"]
         )
+        wrong_direction_sample = (
+            monotonic() - self.path_started_at
+            >= float(self.config["wrong_direction_grace_seconds"])
+            and is_wrong_direction(tracking, state, self.config)
+        )
+        if wrong_direction_sample:
+            self.wrong_direction_steps += 1
+        else:
+            self.wrong_direction_steps = 0
+            self.wrong_direction_reported = False
+        wrong_direction = (
+            self.wrong_direction_steps >= self.wrong_direction_required_steps
+        )
         if (
             goal_reached(tracking, state, self.config)
             or timed_out
+            or wrong_direction
             or abs(tracking.lateral_error) >= self.off_path_limit
             or max(abs(state.roll), abs(state.pitch)) >= self.rollover_limit
         ):
@@ -156,6 +182,11 @@ class PolicyNode(RosRobotInterface):
                     "Quá thời gian chạy tối đa; giữ mô-men hai bánh ở 0"
                 )
                 self.deadline_reported = True
+            if wrong_direction and not self.wrong_direction_reported:
+                self.get_logger().error(
+                    "Hủy attempt: robot chạy ngược hoặc lệch quá xa hướng /plan"
+                )
+                self.wrong_direction_reported = True
             return
         action, _ = self.model.predict(observation, deterministic=True)
         action = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
