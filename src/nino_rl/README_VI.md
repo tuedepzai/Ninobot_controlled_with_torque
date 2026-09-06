@@ -30,7 +30,7 @@ Bài báo xuất vận tốc/góc lái và dùng SWAE cho bản đồ cao độ.
 
 Bài báo dùng robot 4WIS, Isaac Lab và 4096 môi trường song song. Nino dùng Gazebo Harmonic với một mô phỏng vật lý, nên action 4WIS được đổi thành 2 mô-men bánh. RTX chạy phần cập nhật neural network; Gazebo/ROS vẫn chủ yếu chạy CPU. Con số 59 triệu bước/18 phút của paper **không phải** tốc độ có thể kỳ vọng từ một Gazebo đơn.
 
-Trong implementation hiện tại, độ bám `[0.3, 1.0]` được mô phỏng bằng hệ số truyền mô-men ngẫu nhiên theo episode; không thay đổi hệ số contact của SDF khi simulator đang chạy. Dãy gờ thật trong `long_hall.sdf` cao khoảng 1,6–4,4 cm và curriculum tăng dần quãng đường chứa gờ. Paper dùng đường Catmull–Rom kín bán kính khoảng 15 m; hành lang Nino không đủ rộng, nên code sinh đường Catmull–Rom mở ngẫu nhiên với biên ngang tối đa 0,6 m và tăng biên theo curriculum.
+Trong implementation hiện tại, độ bám `[0.3, 1.0]` được mô phỏng bằng hệ số truyền mô-men ngẫu nhiên theo episode; không thay đổi hệ số contact của SDF khi simulator đang chạy. `long_hall.sdf` có 29 gờ cáp cao khoảng 1,6–4,4 cm; vùng `1,30 x 1,00 m` quanh spawn `(0,0,0)` được chừa phẳng, sau đó mật độ gờ tăng trên toàn hành lang. Curriculum tăng dần quãng đường chứa gờ. Paper dùng đường Catmull–Rom kín bán kính khoảng 15 m; hành lang Nino không đủ rộng, nên code sinh đường Catmull–Rom mở ngẫu nhiên với biên ngang tối đa 0,6 m và tăng biên theo curriculum.
 
 ### Observation và action của Nino
 
@@ -81,6 +81,8 @@ Chiều tiến mong muốn không bị gắn cứng vào trục `+X`: nó là th
 4. PPO chọn hai torque mới, sau đó reward đo xem quyết định đó làm xe thẳng lại hay lệch thêm.
 
 Nếu gờ làm lệch xe trong thời gian ngắn, attempt vẫn tiếp tục để policy học phục hồi. Attempt chỉ bị hủy và reset khi sai số hướng từ `60°` hoặc vận tốc lùi từ `0,10 m/s` tồn tại liên tục ít nhất `0,5 s`. Khoảng `1 s` đầu episode được miễn kiểm tra để Gazebo ổn định. Các ngưỡng tương ứng là `wrong_direction_*` trong `config/ppo.yaml`.
+
+Mỗi lần reset, training node lần lượt reset trạng thái model, gọi Gazebo `set_pose` để đặt model `nino` về chính xác `x=0, y=0, z=0, roll=0, pitch=0, yaw=0`, rồi reset odometry và bộ nhớ controller về zero. Không đặt gờ nào trong vùng spawn phẳng.
 
 Action là `Box([-1,-1], [1,1])`, nhân với giới hạn mặc định `4 N.m`, rồi phát lên `/wheel_torque_commands` theo thứ tự `[trái, phải]`. `effort_drive` vẫn giới hạn cứng tối đa `12 N.m`, slew-rate và timeout 0,25 s.
 
@@ -265,6 +267,7 @@ ros2 topic echo /wheel_torque_applied
 ## Xử lý lỗi nhanh
 
 - `Missing /world/long_hall/control`: phải launch bằng `training_sim.launch.py`, không chỉ `sim.launch.py`.
+- thiếu `/world/long_hall/set_pose`: build lại workspace và khởi động lại `training_sim.launch.py` để nạp bridge reset pose mới.
 - thiếu `/reset_wheel_odometry`: build/source lại workspace sau thay đổi `nino_control`.
 - `torch.cuda.is_available() = False`: active đúng `.venv`, chạy `check_cuda`; không cho script âm thầm train CPU.
 - thiếu sensor khi reset: kiểm tra simulation chỉ chạy một phiên và bốn topic `/odom`, `/imu/data`, `/joint_states`, `/scan` đang có dữ liệu.

@@ -32,7 +32,8 @@ def generate_launch_description():
         name="rl_world_control_bridge",
         output="screen",
         arguments=[
-            "/world/long_hall/control@ros_gz_interfaces/srv/ControlWorld"
+            "/world/long_hall/control@ros_gz_interfaces/srv/ControlWorld",
+            "/world/long_hall/set_pose@ros_gz_interfaces/srv/SetEntityPose",
         ],
     )
     return LaunchDescription(

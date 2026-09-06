@@ -11,7 +11,8 @@ import rclpy
 from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from ros_gz_interfaces.srv import ControlWorld
+from ros_gz_interfaces.msg import Entity
+from ros_gz_interfaces.srv import ControlWorld, SetEntityPose
 from sensor_msgs.msg import Imu, JointState, LaserScan
 from std_msgs.msg import Float64MultiArray
 from std_srvs.srv import Trigger
@@ -58,6 +59,9 @@ class RosRobotInterface(Node):
 
         self.world_control = self.create_client(
             ControlWorld, f"/world/{world_name}/control"
+        )
+        self.set_entity_pose = self.create_client(
+            SetEntityPose, f"/world/{world_name}/set_pose"
         )
         self.reset_odometry = self.create_client(Trigger, "/reset_wheel_odometry")
 
@@ -185,6 +189,27 @@ class RosRobotInterface(Node):
         response = self._wait_future(self.world_control.call_async(request), timeout)
         if response is None or not response.success:
             raise RuntimeError("Gazebo rejected the model-only episode reset")
+
+        if not self.set_entity_pose.wait_for_service(timeout_sec=timeout):
+            raise TimeoutError(
+                f"Missing {self.set_entity_pose.srv_name}; rebuild and restart "
+                "training_sim.launch.py"
+            )
+        pose_request = SetEntityPose.Request()
+        pose_request.entity.name = "nino"
+        pose_request.entity.type = Entity.MODEL
+        pose_request.pose.position.x = 0.0
+        pose_request.pose.position.y = 0.0
+        pose_request.pose.position.z = 0.0
+        pose_request.pose.orientation.x = 0.0
+        pose_request.pose.orientation.y = 0.0
+        pose_request.pose.orientation.z = 0.0
+        pose_request.pose.orientation.w = 1.0
+        response = self._wait_future(
+            self.set_entity_pose.call_async(pose_request), timeout
+        )
+        if response is None or not response.success:
+            raise RuntimeError("Gazebo rejected reset pose (0, 0, 0)")
 
         if not self.reset_odometry.wait_for_service(timeout_sec=timeout):
             raise TimeoutError("Missing /reset_wheel_odometry from effort_drive")

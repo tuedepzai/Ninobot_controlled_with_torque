@@ -103,9 +103,11 @@ For a server-only run:
 ros2 launch nino_description sim.launch.py headless:=true
 ```
 
-The robot spawns at `x=0`, `y=0`, `z=0`, and `yaw=0`. Do not start a second
-copy of the launch file while one is already running. `Ctrl-C` requests a
-clean Gazebo server stop and should finish without a false process-crash error.
+The robot spawns at `x=0`, `y=0`, `z=0`, and `yaw=0`. RL episode reset also
+sets this physical Gazebo pose explicitly before resetting wheel odometry and
+controller state. Do not start a second copy of the launch file while one is
+already running. `Ctrl-C` requests a clean Gazebo server stop and should finish
+without a false process-crash error.
 
 ## Verify ros2_control
 
@@ -350,9 +352,12 @@ The modeled moving mass is `4.6888672492 kg`; its aggregate center of mass in
 `base_footprint` is approximately `[0.056018, 0.0, 0.127546] m`. Every inertia
 tensor is positive definite and satisfies the rigid-body triangle conditions.
 
-The default closed hall is 34 m long and 4 m wide. Its fourteen cable bumps
+The default closed hall is 34 m long and 4 m wide. Its 29 cable bumps
 vary from 16–44 mm diameter and −22° to +24°. Every angled cable length is
-`4.0 / cos(angle)`, so it reaches both inner wall faces.
+`4.0 / cos(angle)`, so it reaches both inner wall faces. A marked
+`1.30 x 1.00 m` area centered on `(0,0,0)` remains cable-free for deterministic
+spawning and resets; the nearest cable centers are at `x=-1.10 m` and
+`x=0.90 m`.
 # Ninobot_controlled_with_torque
 # Ninobot_controlled_with_torque
 # Ninobot_controlled_with_torque
