@@ -12,7 +12,10 @@ setup(
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
-        ("share/" + package_name, ["package.xml", "requirements.txt", "README_VI.md"]),
+        (
+            "share/" + package_name,
+            ["package.xml", "requirements.txt", "README.md", "README_VI.md"],
+        ),
         (os.path.join("share", package_name, "config"), glob("config/*.yaml")),
         (os.path.join("share", package_name, "launch"), glob("launch/*.launch.py")),
     ],
@@ -27,7 +30,9 @@ setup(
         "console_scripts": [
             "check_cuda = nino_rl.check_cuda:main",
             "evaluate = nino_rl.evaluate:main",
+            "evaluate_baseline = nino_rl.evaluate_baseline:main",
             "policy_node = nino_rl.policy_node:main",
+            "preflight = nino_rl.preflight:main",
             "train = nino_rl.train:main",
         ],
     },

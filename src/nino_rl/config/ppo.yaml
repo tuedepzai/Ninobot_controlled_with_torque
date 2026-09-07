@@ -1,20 +1,22 @@
 seed: 42
 device: cuda
 control_hz: 10.0
-max_episode_seconds: 60.0
-target_finish_seconds: 50.0
-max_wheel_torque_nm: 4.0
+max_episode_seconds: 120.0
+target_finish_seconds: 90.0
+max_wheel_torque_nm: 0.5
 goal_tolerance_m: 0.45
 goal_lateral_tolerance_m: 0.25
 goal_heading_tolerance_deg: 12.0
 goal_max_speed_m_s: 0.20
 goal_max_yaw_rate_rad_s: 0.30
 goal_max_tilt_deg: 10.0
-wrong_direction_heading_deg: 60.0
+wrong_direction_heading_deg: 90.0
 wrong_direction_reverse_speed_m_s: 0.10
-wrong_direction_grace_seconds: 1.0
-wrong_direction_hold_seconds: 0.5
+wrong_direction_grace_seconds: 3.0
+wrong_direction_hold_seconds: 1.0
 off_path_limit_m: 1.00
+off_path_hold_seconds: 1.0
+navigation_invalid_hold_seconds: 2.0
 rollover_limit_deg: 35.0
 lidar_collision_m: 0.10
 sensor_timeout_seconds: 5.0
@@ -24,11 +26,32 @@ path:
   default_goal_x_m: 30.0
   point_spacing_m: 0.25
 
+navigation:
+  # Map-frame poses [x, y, yaw]. The hallway goal is before the front wall.
+  start_pose: [0.0, 0.0, 0.0]
+  goal_pose: [30.0, 0.0, 0.0]
+  plan_topic: /plan
+  nav_cmd_topic: /cmd_vel_nav
+  stale_seconds: 2.0
+  startup_timeout_seconds: 30.0
+  waypoint_spacing_m: 5.0
+  waypoint_budget_seconds_per_m: 2.5
+  waypoint_slack_seconds: 3.0
+
 curriculum:
   enabled: true
-  # Fractions of total training steps at which a harder cable-bump section starts.
-  stage_fractions: [0.0, 0.20, 0.50, 0.80]
-  goal_x_m: [4.0, 10.0, 18.0, 30.0]
+  fixed_phase: 6
+  # Flat -> fixed cable -> random position -> random angle -> random diameter
+  # -> multiple cables. Exactly one phase is active in each episode.
+  phase_fractions: [0.0, 0.15, 0.30, 0.50, 0.70, 0.85]
+
+terrain_curriculum:
+  fixed_cable_x_m: 8.0
+  fixed_cable_diameter_m: 0.016
+  cable_x_range_m: [4.0, 27.0]
+  max_cable_angle_deg: 45.0
+  cable_diameter_range_m: [0.012, 0.044]
+  max_cables: 6
 
 domain_randomization:
   enabled: true
@@ -40,7 +63,6 @@ domain_randomization:
   position_bias_m: [0.00, 0.01]
   heading_bias_deg: [-1.0, 1.0]
   observation_dropout: [0.00, 0.05]
-  path_lateral_amplitude_m: [0.00, 0.60]
 
 reward:
   progress_weight: 20.0
@@ -56,7 +78,7 @@ reward:
   sigma_lateral_m: 0.30
   sigma_heading_rad: 0.35
   rough_progress_weight: 50.0
-  stuck_penalty: 10.0
+  stuck_penalty: 0.5
   stuck_progress_m: 0.01
   rollover_weight: 20.0
   rollover_threshold_deg: 30.0
@@ -67,6 +89,12 @@ reward:
   early_finish_bonus: 100.0
   goal_slowdown_distance_m: 2.0
   endpoint_motion_weight: 1.0
+  waypoint_bonus: 8.0
+  waypoint_early_bonus: 4.0
+  waypoint_late_penalty: 4.0
+  attitude_weight: 1.0
+  slip_weight: 0.5
+  effort_weight: 0.05
   # Stable progress bonus and vibration penalty use the complete IMU stream.
   imu_stability_weight: 10.0
   imu_vibration_weight: 0.2

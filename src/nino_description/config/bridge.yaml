@@ -20,3 +20,10 @@
   direction: GZ_TO_ROS
   qos_profile: SENSOR_DATA
   frame_id: laser
+
+- ros_topic_name: /ground_truth/odom
+  gz_topic_name: /model/nino/odometry
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: gz.msgs.Odometry
+  direction: GZ_TO_ROS
+  qos_profile: SENSOR_DATA

@@ -12,10 +12,11 @@ from ament_index_python.packages import get_package_share_directory
 import numpy as np
 import rclpy
 from rclpy.time import Time
-from tf2_ros import Buffer, TransformException, TransformListener
+from tf2_ros import TransformException
 
 from nino_rl.core import (
     OBSERVATION_SIZE,
+    NavReference,
     PathTracker,
     goal_reached,
     is_wrong_direction,
@@ -40,18 +41,19 @@ def arguments() -> argparse.Namespace:
 
 class PolicyNode(RosRobotInterface):
     def __init__(self, args: argparse.Namespace) -> None:
+        self.config = load_config(args.config)
         super().__init__(
             subscribe_plan=True,
             use_sim_time=args.use_sim_time,
             node_name="nino_rl_policy",
             plan_topic=args.plan_topic,
+            nav_cmd_topic=str(self.config["navigation"].get("nav_cmd_topic", "/cmd_vel_nav")),
         )
         try:
             from stable_baselines3 import PPO
         except ImportError as error:
             raise RuntimeError("Thiếu stable-baselines3; xem README_VI.md") from error
 
-        self.config = load_config(args.config)
         path_config = load_config(args.path)
         self.path = PathTracker(path_config["waypoints"])
         self.path_source = "YAML"
@@ -68,8 +70,6 @@ class PolicyNode(RosRobotInterface):
                 * float(self.config["control_hz"])
             ),
         )
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
         self.previous_action = np.zeros(2, dtype=np.float32)
         self.action_scale = float(self.config["max_wheel_torque_nm"])
         self.lookahead = list(self.config["path"]["lookahead_m"])
@@ -149,10 +149,35 @@ class PolicyNode(RosRobotInterface):
         if finite_ranges and min(finite_ranges) <= self.collision_distance:
             self.publish_torque(0.0, 0.0)
             return
-        observation, tracking = make_observation(
+        _, tracking = make_observation(
             state, self.path, self.lookahead, self.previous_action
         )
-        timed_out = monotonic() - self.path_started_at >= float(
+        elapsed = monotonic() - self.path_started_at
+        desired_linear, desired_angular = self.desired_twist()
+        reference = NavReference(
+            desired_linear_velocity=desired_linear,
+            desired_angular_velocity=desired_angular,
+            local_waypoint_distance=min(self.lookahead[0], tracking.distance_remaining),
+            final_goal_distance=tracking.endpoint_distance,
+            waypoint_time_remaining_fraction=float(
+                np.clip(
+                    (
+                        float(self.config["target_finish_seconds"])
+                        - elapsed
+                    )
+                    / float(self.config["target_finish_seconds"]),
+                    -1.0,
+                    1.0,
+                )
+            ),
+            valid=self.navigation_valid(
+                float(self.config["navigation"]["stale_seconds"])
+            ),
+        )
+        observation, tracking = make_observation(
+            state, self.path, self.lookahead, self.previous_action, reference
+        )
+        timed_out = elapsed >= float(
             self.config["max_episode_seconds"]
         )
         wrong_direction_sample = (
@@ -174,6 +199,7 @@ class PolicyNode(RosRobotInterface):
             or wrong_direction
             or abs(tracking.lateral_error) >= self.off_path_limit
             or max(abs(state.roll), abs(state.pitch)) >= self.rollover_limit
+            or not reference.valid
         ):
             self.publish_torque(0.0, 0.0)
             self.previous_action.fill(0.0)

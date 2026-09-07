@@ -137,6 +137,12 @@ def generate_launch_description():
             "max_wheel_torque": ParameterValue(
                 LaunchConfiguration("max_wheel_torque"), value_type=float
             ),
+            "accept_cmd_vel": ParameterValue(
+                LaunchConfiguration("accept_cmd_vel"), value_type=bool
+            ),
+            "accept_torque": ParameterValue(
+                LaunchConfiguration("accept_torque"), value_type=bool
+            ),
             "odom_topic": IfElseSubstitution(
                 LaunchConfiguration("linorobot2_mode"),
                 if_value="/odom/unfiltered",
@@ -185,6 +191,16 @@ def generate_launch_description():
             description=(
                 "Publish /odom/unfiltered without odom TF for Linorobot2's EKF"
             ),
+        ),
+        DeclareLaunchArgument(
+            "accept_cmd_vel",
+            default_value="true",
+            description="Allow the safe adapter to actuate from /cmd_vel",
+        ),
+        DeclareLaunchArgument(
+            "accept_torque",
+            default_value="true",
+            description="Allow direct /wheel_torque_commands input",
         ),
         DeclareLaunchArgument(
             "start_effort_drive",

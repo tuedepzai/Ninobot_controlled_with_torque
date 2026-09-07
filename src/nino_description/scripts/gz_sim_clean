@@ -12,12 +12,15 @@ shutdown_requested = False
 
 
 def request_shutdown(_signum=None, _frame=None) -> None:
-    """Ask the Gazebo server to stop before launch escalates the signal."""
+    """Record the interrupt, including interrupts during child creation."""
     global shutdown_requested
-    if shutdown_requested:
-        return
     shutdown_requested = True
 
+
+def stop_child() -> None:
+    """Stop and reap the child before the launch wrapper exits."""
+    if child is None or child.poll() is not None:
+        return
     try:
         subprocess.run(
             [
@@ -46,7 +49,14 @@ def request_shutdown(_signum=None, _frame=None) -> None:
         try:
             child.wait(timeout=0.5)
         except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGTERM)
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+                child.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+            except ProcessLookupError:
+                pass
 
 
 def main() -> int:
@@ -57,14 +67,25 @@ def main() -> int:
 
     # Empty arguments can come from conditional launch substitutions.
     gazebo_arguments = [argument for argument in sys.argv[1:] if argument]
+    if shutdown_requested:
+        return 0
     child = subprocess.Popen(
         ["gz", "sim", *gazebo_arguments],
         start_new_session=True,
     )
-    return_code = child.wait()
+    # A signal can arrive between Popen starting Gazebo and assigning child.
+    # Handle it here after assignment, so a launch exception cannot leave an
+    # orphaned server publishing an unrelated simulation clock.
+    try:
+        while not shutdown_requested:
+            try:
+                return child.wait(timeout=0.1)
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        stop_child()
 
-    # Preserve real Gazebo failures; normalize only an operator-requested stop.
-    return 0 if shutdown_requested else return_code
+    return 0
 
 
 if __name__ == "__main__":

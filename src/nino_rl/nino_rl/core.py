@@ -15,7 +15,7 @@ import numpy as np
 import yaml
 
 
-OBSERVATION_SIZE = 41
+OBSERVATION_SIZE = 54
 
 
 def load_config(path: str | Path) -> dict:
@@ -151,6 +151,10 @@ class RobotState:
     yaw_rate: float = 0.0
     left_wheel_velocity: float = 0.0
     right_wheel_velocity: float = 0.0
+    ground_linear_velocity: float = 0.0
+    ground_yaw_rate: float = 0.0
+    applied_left_torque: float = 0.0
+    applied_right_torque: float = 0.0
     roll: float = 0.0
     pitch: float = 0.0
     orientation_x: float = 0.0
@@ -176,6 +180,35 @@ class TrackingState:
     endpoint_distance: float
 
 
+@dataclass
+class NavReference:
+    """Fresh Nav2 reference values attached to one policy observation."""
+
+    desired_linear_velocity: float = 0.0
+    desired_angular_velocity: float = 0.0
+    local_waypoint_distance: float = 0.0
+    final_goal_distance: float = 0.0
+    waypoint_time_remaining_fraction: float = 0.0
+    valid: bool = False
+
+
+def wheel_slip_ratios(
+    state: RobotState, wheel_radius: float = 0.0625, wheel_separation: float = 0.34273666
+) -> tuple[float, float]:
+    """Return bounded longitudinal slip for each wheel using Gazebo truth speed."""
+    half_track = 0.5 * wheel_separation
+    ground_left = state.ground_linear_velocity - half_track * state.ground_yaw_rate
+    ground_right = state.ground_linear_velocity + half_track * state.ground_yaw_rate
+    wheel_left = wheel_radius * state.left_wheel_velocity
+    wheel_right = wheel_radius * state.right_wheel_velocity
+
+    def ratio(wheel_speed: float, ground_speed: float) -> float:
+        scale = max(abs(wheel_speed), abs(ground_speed), 0.10)
+        return float(np.clip((wheel_speed - ground_speed) / scale, -5.0, 5.0))
+
+    return ratio(wheel_left, ground_left), ratio(wheel_right, ground_right)
+
+
 def goal_reached(
     tracking: TrackingState, state: RobotState, config: Mapping[str, float]
 ) -> bool:
@@ -194,14 +227,13 @@ def goal_reached(
 
 
 def is_wrong_direction(
-    tracking: TrackingState, state: RobotState, config: Mapping[str, float]
+    tracking: TrackingState,
+    state: RobotState,
+    config
 ) -> bool:
-    """Return true when the robot faces away from the plan or drives backward."""
     return (
         abs(tracking.heading_error)
         >= radians(float(config["wrong_direction_heading_deg"]))
-        or state.linear_velocity
-        <= -float(config["wrong_direction_reverse_speed_m_s"])
     )
 
 
@@ -210,12 +242,17 @@ def make_observation(
     path: PathTracker,
     lookahead_distances: Sequence[float],
     previous_action: Sequence[float],
+    nav_reference: NavReference | None = None,
 ) -> tuple[np.ndarray, TrackingState]:
     local, path_s, lateral, heading_error = path.local_lookahead(
         state.x, state.y, state.yaw, lookahead_distances
     )
     if len(local) != 9:
         raise ValueError("The paper-derived observation requires exactly 9 look-ahead distances")
+    reference = nav_reference or NavReference()
+    local_target = local[0]
+    local_target_norm = max(float(np.linalg.norm(local_target)), 1.0e-6)
+    slip_left, slip_right = wheel_slip_ratios(state)
     observation = np.concatenate(
         [
             (local.reshape(-1) / 15.0),
@@ -236,6 +273,21 @@ def make_observation(
             ],
             lidar_sectors(state.lidar_ranges, state.lidar_range_max),
             np.asarray(previous_action, dtype=np.float64),
+            [
+                reference.desired_linear_velocity / 0.5,
+                reference.desired_angular_velocity / 2.5,
+                local_target[0] / local_target_norm,
+                local_target[1] / local_target_norm,
+                lateral / 2.0,
+                reference.local_waypoint_distance / 15.0,
+                reference.final_goal_distance / 35.0,
+                state.roll / (pi / 2.0),
+                state.pitch / (pi / 2.0),
+                slip_left,
+                slip_right,
+                reference.waypoint_time_remaining_fraction,
+                1.0 if reference.valid else 0.0,
+            ],
         ]
     ).astype(np.float32)
     if observation.shape != (OBSERVATION_SIZE,):
@@ -268,9 +320,14 @@ def compute_reward(
     timed_out: bool,
     succeeded: bool,
     wrong_direction: bool = False,
+    waypoint_reached_count: int = 0,
+    waypoint_time_margin_fraction: float = 0.0,
 ) -> tuple[float, dict[str, float]]:
     """Combine both papers' rewards, adapted to differential wheel torque."""
-    delta_s = current.path_s - previous.path_s
+    # Nav2 may replan from the current pose, resetting path_s.  Reduction in
+    # remaining arc length is stable across such replans and equals delta_s on
+    # a fixed path.
+    delta_s = previous.distance_remaining - current.distance_remaining
     progress_weight = (
         float(reward_config["progress_weight"])
         + np.clip(curriculum_level, 0.0, 1.0)
@@ -331,6 +388,16 @@ def compute_reward(
     imu_vibration = -float(reward_config["imu_vibration_weight"]) * (
         angular_energy + acceleration_energy
     ) * dt
+    attitude = -float(reward_config.get("attitude_weight", 0.0)) * (
+        state.roll**2 + state.pitch**2
+    )
+    slip_left, slip_right = wheel_slip_ratios(state)
+    slip = -float(reward_config.get("slip_weight", 0.0)) * (
+        slip_left**2 + slip_right**2
+    ) * dt
+    effort = -float(reward_config.get("effort_weight", 0.0)) * float(
+        np.mean(np.asarray(action, dtype=np.float64) ** 2)
+    ) * dt
     slowdown_distance = float(reward_config["goal_slowdown_distance_m"])
     slowdown_fraction = max(
         0.0, 1.0 - current.endpoint_distance / max(slowdown_distance, 1.0e-6)
@@ -377,6 +444,16 @@ def compute_reward(
         early_finish = float(reward_config["early_finish_bonus"]) * max(
             0.0, (target_time - elapsed) / target_time
         )
+    waypoint = float(reward_config.get("waypoint_bonus", 0.0)) * max(
+        0, waypoint_reached_count
+    )
+    if waypoint_reached_count:
+        waypoint += float(reward_config.get("waypoint_early_bonus", 0.0)) * max(
+            0.0, waypoint_time_margin_fraction
+        )
+        waypoint -= float(reward_config.get("waypoint_late_penalty", 0.0)) * max(
+            0.0, -waypoint_time_margin_fraction
+        )
     time_cost = -float(reward_config["time_penalty"])
     terms = {
         "progress": float(progress),
@@ -389,6 +466,9 @@ def compute_reward(
         "reverse": float(reverse),
         "imu_stability": float(imu_stability),
         "imu_vibration": float(imu_vibration),
+        "attitude": float(attitude),
+        "slip": float(slip),
+        "effort": float(effort),
         "endpoint_motion": float(endpoint_motion),
         "smoothness": float(smoothness),
         "stuck": float(stuck),
@@ -398,6 +478,7 @@ def compute_reward(
         "success": float(success),
         "wrong_direction_failure": float(wrong_direction_failure),
         "early_finish": float(early_finish),
+        "waypoint": float(waypoint),
     }
     return float(sum(terms.values())), terms
 

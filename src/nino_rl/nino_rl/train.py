@@ -23,6 +23,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--checkpoint-every", type=int, default=25_000)
     parser.add_argument("--check-env", action="store_true")
+    parser.add_argument("--preflight-timeout", type=float, default=30.0)
     return parser.parse_args(sys.argv[1:])
 
 
@@ -51,6 +52,15 @@ def main() -> None:
         )
 
     from nino_rl.ros_env import NinoGazeboEnv
+    from nino_rl.preflight import run_preflight
+
+    print("Running mandatory 12-point Nav2/RL preflight...")
+    try:
+        preflight_results = run_preflight(config, args.preflight_timeout)
+    except (RuntimeError, TimeoutError) as error:
+        raise SystemExit(f"PREFLIGHT FAILED; training was not started: {error}") from error
+    for result in preflight_results:
+        print(f"PASS: {result}")
 
     class TrainingMetricsCallback(BaseCallback):
         """Expose reward components and endpoint metrics in TensorBoard."""
@@ -78,7 +88,11 @@ def main() -> None:
                         "time_seconds",
                         "endpoint_distance_m",
                         "mean_abs_lateral_error_m",
+                        "rms_path_deviation_m",
+                        "max_path_deviation_m",
                         "max_tilt_deg",
+                        "rms_wheel_slip",
+                        "rms_wheel_torque_nm",
                         "mean_imu_angular_xy_rad_s",
                     ):
                         self.logger.record(f"episode/{name}", float(metrics[name]))
@@ -149,7 +163,7 @@ def main() -> None:
             total_timesteps=args.timesteps,
             callback=[checkpoint_callback, TrainingMetricsCallback()],
             reset_num_timesteps=reset_num_timesteps,
-            progress_bar=True,
+            progress_bar=False,
         )
         final_path = run_dir / "nino_ppo_final"
         model.save(final_path)

@@ -1,4 +1,4 @@
-"""Start the Nino cable-bump world plus the episode-reset service bridge."""
+"""Start Nino, AMCL/Nav2, and the RL-only torque training interfaces."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -9,6 +9,9 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    default_map = PathJoinSubstitution(
+        [FindPackageShare("linorobot2_navigation"), "maps", "long_hall.yaml"]
+    )
     simulator = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
@@ -19,11 +22,35 @@ def generate_launch_description():
             "world": "long_hall.sdf",
             "world_name": "long_hall",
             "headless": LaunchConfiguration("headless"),
-            "rviz": LaunchConfiguration("rviz"),
+            "rviz": "false",
             "sensor_monitor": "false",
             "start_effort_drive": "true",
             "linorobot2_mode": "false",
+            # RL observes /cmd_vel_nav, but only the policy may actuate torque.
+            # The collision-filtered /cmd_vel cannot drive in training mode.
+            "accept_cmd_vel": "true",
+            "accept_torque": "true",
             "verbosity": LaunchConfiguration("verbosity"),
+            "max_wheel_torque": LaunchConfiguration("max_wheel_torque"),
+        }.items(),
+    )
+    navigation = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution(
+                [
+                    FindPackageShare("linorobot2_navigation"),
+                    "launch",
+                    "navigation.launch.py",
+                ]
+            )
+        ),
+        launch_arguments={
+            "sim": "true",
+            "rviz": LaunchConfiguration("rviz"),
+            "map": LaunchConfiguration("map"),
+            "initial_pose_x": LaunchConfiguration("start_x"),
+            "initial_pose_y": LaunchConfiguration("start_y"),
+            "initial_pose_yaw": LaunchConfiguration("start_yaw"),
         }.items(),
     )
     reset_bridge = Node(
@@ -34,6 +61,8 @@ def generate_launch_description():
         arguments=[
             "/world/long_hall/control@ros_gz_interfaces/srv/ControlWorld",
             "/world/long_hall/set_pose@ros_gz_interfaces/srv/SetEntityPose",
+            "/world/long_hall/create@ros_gz_interfaces/srv/SpawnEntity",
+            "/world/long_hall/remove@ros_gz_interfaces/srv/DeleteEntity",
         ],
     )
     return LaunchDescription(
@@ -47,7 +76,19 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "verbosity", default_value="1", description="Gazebo log level (0-4)"
             ),
+            DeclareLaunchArgument(
+                "max_wheel_torque",
+                default_value="4.0",
+                description="Symmetric RL motor limit in N.m (also enforced by safety adapter)",
+            ),
+            DeclareLaunchArgument(
+                "map", default_value=default_map, description="Static map; legacy maps are unchanged"
+            ),
+            DeclareLaunchArgument("start_x", default_value="0.0"),
+            DeclareLaunchArgument("start_y", default_value="0.0"),
+            DeclareLaunchArgument("start_yaw", default_value="0.0"),
             simulator,
+            navigation,
             reset_bridge,
         ]
     )

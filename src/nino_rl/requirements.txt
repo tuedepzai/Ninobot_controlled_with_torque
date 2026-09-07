@@ -7,4 +7,5 @@ gymnasium>=1.0,<2.0
 stable-baselines3>=2.4,<3.0
 tensorboard>=2.9
 tqdm>=4.66
+rich>=13.0
 PyYAML>=6.0

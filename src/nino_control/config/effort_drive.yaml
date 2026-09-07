@@ -30,3 +30,7 @@ effort_drive:
     odom_frame_id: odom
     base_frame_id: base_footprint
     publish_odom_tf: true
+    # Baseline mode accepts /cmd_vel and ignores direct RL torque.  RL launch
+    # overrides these two switches so Nav2 remains a reference generator only.
+    accept_cmd_vel: true
+    accept_torque: true

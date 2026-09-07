@@ -104,6 +104,12 @@ def main() -> None:
         "mean_abs_lateral_error_m": float(
             np.mean([row["mean_abs_lateral_error_m"] for row in rows])
         ),
+        "mean_rms_path_deviation_m": float(
+            np.mean([row["rms_path_deviation_m"] for row in rows])
+        ),
+        "max_path_deviation_m": float(
+            np.max([row["max_path_deviation_m"] for row in rows])
+        ),
         "mean_abs_roll_deg": float(np.mean([row["mean_abs_roll_deg"] for row in rows])),
         "mean_abs_pitch_deg": float(np.mean([row["mean_abs_pitch_deg"] for row in rows])),
         "mean_imu_angular_xy_rad_s": float(
@@ -113,6 +119,24 @@ def main() -> None:
             np.mean([row["mean_imu_acceleration_change_m_s2"] for row in rows])
         ),
         "max_tilt_deg": float(np.max([row["max_tilt_deg"] for row in rows])),
+        "mean_rms_wheel_slip": float(
+            np.mean([row["rms_wheel_slip"] for row in rows])
+        ),
+        "max_abs_wheel_slip": float(
+            np.max([row["max_abs_wheel_slip"] for row in rows])
+        ),
+        "mean_rms_wheel_torque_nm": float(
+            np.mean([row["rms_wheel_torque_nm"] for row in rows])
+        ),
+        "max_abs_wheel_torque_nm": float(
+            np.max([row["max_abs_wheel_torque_nm"] for row in rows])
+        ),
+        "mean_rms_imu_acceleration_m_s2": float(
+            np.mean([row["rms_imu_acceleration_m_s2"] for row in rows])
+        ),
+        "waypoint_arrival_times_seconds": [
+            row["waypoint_arrival_times_seconds"] for row in rows
+        ],
     }
     json_path = output / f"summary-{stamp}.json"
     with json_path.open("w", encoding="utf-8") as stream:

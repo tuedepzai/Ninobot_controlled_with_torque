@@ -5,6 +5,7 @@ import numpy as np
 
 from nino_rl.core import (
     OBSERVATION_SIZE,
+    NavReference,
     PathTracker,
     RobotState,
     TrackingState,
@@ -17,6 +18,7 @@ from nino_rl.core import (
     make_observation,
     quaternion_to_euler,
     wrap_angle,
+    wheel_slip_ratios,
 )
 
 
@@ -66,6 +68,44 @@ def test_observation_has_fixed_finite_shape():
         observation[24:34],
         [0.0, 0.0, 0.25, 0.9682458, 0.1, -0.2 / 3.0, 0.1 / 3.0, 0.1, -0.2, 0.98],
     )
+
+
+def test_observation_contains_nav_reference_timer_and_validity():
+    state = RobotState(x=1.0, y=0.2)
+    path = PathTracker([(0.0, 0.0), (30.0, 0.0)])
+    reference = NavReference(
+        desired_linear_velocity=0.25,
+        desired_angular_velocity=-0.5,
+        local_waypoint_distance=4.0,
+        final_goal_distance=29.0,
+        waypoint_time_remaining_fraction=0.75,
+        valid=True,
+    )
+    observation, _ = make_observation(
+        state, path, LOOKAHEAD, [0.0, 0.0], reference
+    )
+    assert np.isclose(observation[41], 0.5)
+    assert np.isclose(observation[42], -0.2)
+    assert np.isclose(observation[45], 0.1)
+    assert np.isclose(observation[46], 4.0 / 15.0)
+    assert np.isclose(observation[47], 29.0 / 35.0)
+    assert np.isclose(observation[52], 0.75)
+    assert observation[53] == 1.0
+
+
+def test_wheel_slip_uses_wheel_and_ground_velocity():
+    rolling = RobotState(
+        left_wheel_velocity=8.0,
+        right_wheel_velocity=8.0,
+        ground_linear_velocity=0.5,
+    )
+    slipping = RobotState(
+        left_wheel_velocity=12.0,
+        right_wheel_velocity=12.0,
+        ground_linear_velocity=0.2,
+    )
+    assert np.allclose(wheel_slip_ratios(rolling), [0.0, 0.0])
+    assert max(abs(value) for value in wheel_slip_ratios(slipping)) > 0.5
 
 
 def test_lidar_empty_and_non_finite_are_safe():
@@ -341,6 +381,43 @@ def test_reward_adds_more_points_for_earlier_finish():
     assert early_terms["early_finish"] == 20.0
     assert late_terms["early_finish"] == 0.0
     assert early_reward > late_reward
+
+
+def test_waypoint_reward_uses_time_margin_without_dominating_goal():
+    full = load_config(Path(__file__).parents[1] / "config" / "ppo.yaml")
+    reward_config = {
+        **full["reward"],
+        "target_finish_seconds": full["target_finish_seconds"],
+        "goal_max_speed_m_s": full["goal_max_speed_m_s"],
+        "goal_max_yaw_rate_rad_s": full["goal_max_yaw_rate_rad_s"],
+    }
+    previous = TrackingState(4.9, 0.0, 0.0, 25.1, 25.1)
+    current = TrackingState(5.0, 0.0, 0.0, 25.0, 25.0)
+    common = dict(
+        previous=previous,
+        current=current,
+        state=RobotState(),
+        previous_state=RobotState(),
+        action=[0.0, 0.0],
+        previous_action=[0.0, 0.0],
+        action_before_previous=[0.0, 0.0],
+        dt=0.1,
+        elapsed=10.0,
+        reward_config=reward_config,
+        curriculum_level=0.0,
+        timed_out=False,
+        succeeded=False,
+        waypoint_reached_count=1,
+    )
+    early, early_terms = compute_reward(
+        waypoint_time_margin_fraction=0.5, **common
+    )
+    late, late_terms = compute_reward(
+        waypoint_time_margin_fraction=-0.5, **common
+    )
+    assert early_terms["waypoint"] > late_terms["waypoint"]
+    assert early > late
+    assert early_terms["waypoint"] < reward_config["success_bonus"]
 
 
 def test_endpoint_motion_penalty_encourages_smooth_stop():

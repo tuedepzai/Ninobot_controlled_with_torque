@@ -9,6 +9,10 @@ The `Add_rl` branch also includes CUDA-prioritized PPO training, evaluation,
 and a Nav2-aware wheel-torque policy. See the complete Vietnamese guide:
 [src/nino_rl/README_VI.md](src/nino_rl/README_VI.md).
 
+The current Nav2-guided architecture, 54-value observation, six-phase terrain
+curriculum, mandatory preflight, baseline comparison, and preserved-map notes
+are documented in [src/nino_rl/README.md](src/nino_rl/README.md).
+
 The simulator uses this control path:
 
 ```text
@@ -86,6 +90,10 @@ colcon build --symlink-install
 source install/setup.bash
 ros2 launch nino_description sim.launch.py
 ```
+
+For RL training, build the Python packages with the project venv interpreter
+as described in [the Nav2-guided RL guide](src/nino_rl/README.md); otherwise
+the installed training command cannot import PyTorch or Stable-Baselines3.
 
 To open the sensor view and print all three sensors in the launch terminal:
 
