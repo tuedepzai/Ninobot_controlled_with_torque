@@ -57,6 +57,7 @@ sudo apt install ros-jazzy-ros-gz ros-jazzy-xacro \
   ros-jazzy-gz-ros2-control ros-jazzy-controller-manager \
   ros-jazzy-effort-controllers \
   ros-jazzy-joint-state-broadcaster ros-jazzy-ros2controlcli ros-jazzy-rviz2 \
+  ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-toolbox \
   python3-colcon-common-extensions
 ```
 
@@ -257,8 +258,18 @@ as a final independent backstop.
 
 ## Nav2 and Linorobot2 compatibility
 
-No Nav2 nodes are included or launched yet. The default simulation already
-provides the mobile-base interfaces Nav2 needs:
+`nino_navigation` provides SLAM Toolbox mapping, map saving with Nav2's map
+saver, and AMCL + Nav2 navigation on saved maps. Follow
+[the mapping and navigation guide (Vietnamese)](NAVIGATION.md) for container
+commands and RViz steps. Start the simulation once, then use either:
+
+```bash
+ros2 launch nino_navigation mapping.launch.py
+# After saving a map and stopping mapping:
+ros2 launch nino_navigation navigation.launch.py map:=/ros2_ws/maps/hall_01.yaml
+```
+
+The default simulation provides the mobile-base interfaces Nav2 needs:
 
 - `/cmd_vel` — `geometry_msgs/msg/Twist`
 - `/odom` — `nav_msgs/msg/Odometry`
@@ -327,8 +338,8 @@ The modeled moving mass is `4.6888672492 kg`; its aggregate center of mass in
 `base_footprint` is approximately `[0.056018, 0.0, 0.127546] m`. Every inertia
 tensor is positive definite and satisfies the rigid-body triangle conditions.
 
-The default closed hall is 34 m long and 4 m wide. Its fourteen cable bumps
-vary from 16–44 mm diameter and −22° to +24°. Every angled cable length is
+The default closed hall is 14 m long and 4 m wide. Its fourteen cable bumps
+vary from 8–22 mm diameter and −22° to +24°. Every angled cable length is
 `4.0 / cos(angle)`, so it reaches both inner wall faces.
 # Ninobot_controlled_with_torque
 # Ninobot_controlled_with_torque

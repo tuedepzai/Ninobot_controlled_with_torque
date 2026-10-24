@@ -1,0 +1,34 @@
+
+services:
+  nino:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+
+    image: nino-ros2:jazzy
+    container_name: nino-dev
+
+    stdin_open: true
+    tty: true
+
+    network_mode: host
+    ipc: host
+
+    gpus: all
+
+    devices:
+      - /dev/dxg:/dev/dxg
+
+    environment:
+      DISPLAY: ${DISPLAY}
+      WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-wayland-0}
+      XDG_RUNTIME_DIR: /mnt/wslg/runtime-dir
+      QT_X11_NO_MITSHM: "1"
+      MESA_D3D12_DEFAULT_ADAPTER_NAME: NVIDIA
+      GALLIUM_DRIVER: d3d12
+
+    volumes:
+      - .:/ros2_ws
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /mnt/wslg:/mnt/wslg
+      - /usr/lib/wsl:/usr/lib/wsl:ro
