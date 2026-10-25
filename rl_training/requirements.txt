@@ -1,0 +1,7 @@
+# Install torch==2.7.1 from the cu128 index first; see README.md.
+stable-baselines3==2.7.1
+gymnasium==1.2.2
+numpy==1.26.4
+matplotlib==3.10.8
+PyYAML==6.0.2
+pytest==8.4.2

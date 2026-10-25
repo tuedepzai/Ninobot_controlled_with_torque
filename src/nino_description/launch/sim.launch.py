@@ -134,6 +134,8 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("start_effort_drive")),
         parameters=[effort_drive_config, {
             "use_sim_time": True,
+            "enable_residual": ParameterValue(
+                LaunchConfiguration("enable_residual"), value_type=bool),
             "max_wheel_torque": ParameterValue(
                 LaunchConfiguration("max_wheel_torque"), value_type=float
             ),
@@ -154,6 +156,9 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            "enable_residual", default_value="false",
+            description="Enable bounded RL torque residual during fixed-path FOLLOWING only"),
         DeclareLaunchArgument(
             "verbosity",
             default_value="2",

@@ -1,0 +1,14 @@
+episode_manager:
+  ros__parameters:
+    max_path_deviation: 0.20
+    monitor_rate: 20.0
+    pose_timeout: 0.5
+    odom_warmup_duration: 1.0
+    candidate_timeout: 0.5
+    planning_timeout: 15.0
+    episode_timeout: 180.0
+    stop_timeout: 5.0
+    stop_linear_tolerance: 0.02
+    stop_angular_tolerance: 0.05
+    global_frame: map
+    base_frame: base_footprint
