@@ -307,7 +307,7 @@ CPU sẽ dừng rõ ràng. Model test thực tế cho actor, critic, forward và
 Torch hay can thiệp model. Kiểm tra thêm tiến trình bằng `docker exec nino-dev
 nvidia-smi` từ host.
 
-Web chỉ đọc file, bind loopback, không có nút điều khiển robot hay dừng job.
+Trang dashboard train chỉ đọc file, bind loopback, không có nút dừng job train.
 Server dữ liệu chạy trong Docker ở port 8765. Relay WSL ở port 8766 giúp Windows
 truy cập localhost mà không thay cấu hình Docker/GPU/WSLg. Sau khi máy/Docker
 khởi động lại, chạy từ PowerShell (không mở bản thứ hai khi port đã có server):
@@ -324,6 +324,52 @@ hàng mới. `_v5` tiếp tục model/replay 18.604 bước, mục tiêu 50M, m�
 64 test RL qua. API live, route báo cáo và logic JS đã được kiểm tra, gồm
 trạng thái lỗi/rỗng, bảng và bằng chứng GPU; chưa xác nhận giao diện bằng
 trình duyệt thật vì môi trường không có browser automation khả dụng.
+
+### Demo Gazebo: Test PI và Test PI + SAC
+
+Trang điều khiển demo: **http://localhost:8766/demo**. Chọn:
+
+- **Test PI · không SAC**: robot về đầu hành lang và chạy với
+  `enable_residual=false` trong effort_drive; không gọi mạng SAC để lấy action.
+- **Test PI + SAC**: cùng vị trí xuất phát, bật residual và chạy model 20.000
+  bước với action xác định. Không học thêm, không đổi PI gains hay giới hạn.
+- **Dừng robot**: hủy goal Nav2, bỏ residual, giữ Gazebo mở.
+- **Chạy lại**: khởi động lại mô phỏng để reset odom/PI/AMCL, rồi tự chạy chế
+  độ đang chọn. **Camera theo robot** dùng dịch vụ GUI Gazebo để bám model nino.
+- **Đóng demo**: đóng các tiến trình mô phỏng/Nav2 do demo tạo. Train vẫn tạm
+  dừng cho tới khi được tiếp tục, tránh hai phiên điều khiển chồng nhau.
+
+Hai biểu đồ cho hai bánh chủ động: PI nền, residual được chấp nhận và tổng lệnh
+sau các giới hạn; đơn vị N·m. Đây không phải cảm biến đo mô-men thực. Do giới
+hạn tốc độ/thay đổi mô-men, tổng lệnh có thể khác tổng hai đường kia tại cùng
+mẫu. Mẫu hiển thị ở bước RL và lúc đứng yên, chưa phải toàn bộ tín hiệu 50 Hz.
+
+Demo có server riêng, không nhận tùy ý mô-men, đường dẫn model hay topic từ web.
+Chỉ các lệnh start/stop/restart/chọn PI/chọn SAC/focus/close được chấp nhận;
+endpoint không điều khiển job train. Mọi thay đổi chế độ đều bắt đầu episode
+mới và vẫn giữ EpisodeManager, collision monitor và watchdog. Robot có hai
+bánh chủ động cùng hai caster thụ động, không phải bốn action torque độc lập.
+
+Chỉ khởi động khi đã lưu và dừng job train/Gazebo khác:
+
+```bash
+python rl_training/demo_server.py \
+  --model /ros2_ws/rl_training/runs/train_20261025_181509_419600/model.zip \
+  --config /ros2_ws/rl_training/runs/train_20261025_181509_419600/config.yaml \
+  --map /ros2_ws/maps/hall_01.yaml
+```
+
+Server demo bind loopback 8770; web 8766 relay tới nó. Cần giữ hai server của
+dashboard như hướng dẫn trên. Không đổi Docker GPU hay WSLg. Model giữ nguyên;
+dữ liệu demo ghi vào `runs/live_demo_.../`, tách khỏi các phép evaluate định kỳ.
+
+Đã kiểm chứng ngày 26/10/2026: 70 test qua. Test PI chạy thật với
+`enable_residual=False`, telemetry residual hai bánh bằng 0. Nút dừng hủy goal
+và chuyển STOPPED, giữ GUI mở. Test PI + SAC chạy thật với
+`enable_residual=True` và residual khác 0; GUI move_to/follow trả lời thành công.
+Đã kiểm tra cú pháp/logic JS gửi đúng lệnh hai nút; capture cửa sổ WSLg bị
+timeout nên không tuyên bố đã kiểm tra giao diện bằng screenshot. Job train
+được lưu và tạm dừng trong khi demo hoạt động; không tự chạy chồng mô phỏng.
 
 ### Đánh giá thủ công model
 

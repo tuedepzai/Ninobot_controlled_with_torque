@@ -14,6 +14,7 @@ import subprocess
 from threading import Lock
 import time
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request, urlopen
 
 
 class Lines:
@@ -274,10 +275,51 @@ class Dashboard:
 
 def make_handler(dashboard, backend_container=None):
     class Handler(BaseHTTPRequestHandler):
+        def demo_request(self, body=None):
+            target = 'http://127.0.0.1:8770'+urlsplit(self.path).path
+            if backend_container:
+                script = ('import urllib.request,sys; '
+                          'body=sys.stdin.buffer.read() if sys.argv[2]=="POST" else None; '
+                          'req=urllib.request.Request(sys.argv[1],data=body,headers={"Content-Type":"application/json"},method=sys.argv[2]); '
+                          'sys.stdout.buffer.write(urllib.request.urlopen(req,timeout=5).read())')
+                response = subprocess.run(['docker', 'exec', '-i', backend_container, 'python3', '-c',
+                    script, target, 'POST' if body is not None else 'GET'], input=body or b'',
+                    capture_output=True, timeout=8, check=True)
+                return response.stdout
+            request = Request(target, data=body, headers={'Content-Type': 'application/json'},
+                              method='POST' if body is not None else 'GET')
+            return urlopen(request, timeout=5).read()
+
+        def do_POST(self):
+            if self.path != '/api/demo/command':
+                self.send_error(404)
+                return
+            origin = self.headers.get('Origin')
+            if origin and origin not in ('http://localhost:8766', 'http://127.0.0.1:8766'):
+                self.send_error(403)
+                return
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                if not 0 < length <= 256 or not self.headers.get('Content-Type', '').startswith('application/json'):
+                    raise ValueError('Small JSON command required')
+                body = self.demo_request(self.rfile.read(length))
+                self.send_response(202)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(body)
+            except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                self.send_error(400, str(exc))
+
         def do_GET(self):
             url = urlsplit(self.path)
             try:
-                if backend_container and (url.path in ('/api/jobs', '/api/state') or url.path.startswith('/report/')):
+                if url.path == '/api/demo':
+                    body, content_type = self.demo_request(), 'application/json'
+                elif url.path == '/demo':
+                    body = (Path(__file__).parent/'dashboard'/'demo.html').read_bytes()
+                    content_type = 'text/html; charset=utf-8'
+                elif backend_container and (url.path in ('/api/jobs', '/api/state') or url.path.startswith('/report/')):
                     # Local relay when Docker Desktop's host network is not
                     # forwarded to Windows localhost. No Docker/WSLg changes.
                     script = ('import urllib.request,sys; '

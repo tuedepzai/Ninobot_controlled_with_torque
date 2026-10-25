@@ -256,6 +256,10 @@ class NinoResidualEnv(gym.Env):
         return retry_startup(self._reset_once, self.cfg.get('startup_attempts', 3),
                              self._report_startup_retry)
 
+    def _before_goal(self):
+        """Optional demo gate; training submits the goal immediately."""
+        pass
+
     def _reset_once(self):
         if self.closed:
             raise RuntimeError('Environment is closed')
@@ -328,6 +332,7 @@ class NinoResidualEnv(gym.Env):
                                        f'see {self.session_dir}/navigation.log')
                 start = monotonic()
                 self._wait(lambda: monotonic()-start > 0.1)
+            self._before_goal()
             goal = NavigateToPose.Goal()
             goal.pose.header.frame_id = 'map'
             goal.pose.pose.position.x = self.cfg['goal_x']
