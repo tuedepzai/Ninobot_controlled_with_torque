@@ -269,6 +269,12 @@ ros2 launch nino_navigation mapping.launch.py
 ros2 launch nino_navigation navigation.launch.py map:=/ros2_ws/maps/hall_01.yaml
 ```
 
+Navigation now defaults to fixed-path episodes: compute one global path, follow
+that original path, and fail/stop when measured cross-track error exceeds
+`max_path_deviation` (default 0.20 m). Reset with
+`ros2 service call /episode/reset std_srvs/srv/Trigger '{}'` before the next goal.
+Use `fixed_path:=false` only to restore the original Nav2 replanning workflow.
+
 The default simulation provides the mobile-base interfaces Nav2 needs:
 
 - `/cmd_vel` — `geometry_msgs/msg/Twist`
@@ -312,6 +318,12 @@ navigation/SLAM nodes against Nino's standard topics instead.
 
 ## Moving from Gazebo to Xiaomi CyberGear hardware
 
+Residual SAC integration for Gazebo is available under
+[`rl_training/`](rl_training/README.md). Normal simulation keeps residual torque
+disabled. Follow that guide for baseline runs, a short SAC smoke test, training,
+evaluation and IMU/path/torque plots. This is an experimental training pipeline,
+not a validated policy for hardware.
+
 `gz_ros2_control/GazeboSimSystem` is simulation-only. On the physical robot,
 replace that hardware plugin with a ros2_control `SystemInterface` that:
 
@@ -339,7 +351,7 @@ The modeled moving mass is `4.6888672492 kg`; its aggregate center of mass in
 tensor is positive definite and satisfies the rigid-body triangle conditions.
 
 The default closed hall is 14 m long and 4 m wide. Its fourteen cable bumps
-vary from 8–22 mm diameter and −22° to +24°. Every angled cable length is
+vary from 10–27.5 mm diameter and −22° to +24°. Every angled cable length is
 `4.0 / cos(angle)`, so it reaches both inner wall faces.
 # Ninobot_controlled_with_torque
 # Ninobot_controlled_with_torque

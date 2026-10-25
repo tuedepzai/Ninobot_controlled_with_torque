@@ -52,6 +52,16 @@ Visualization Manager:
       Reliability Policy: Reliable
       History Policy: Keep Last
   - Class: rviz_default_plugins/Path
+    Name: Fixed reference path
+    Enabled: true
+    Color: 0; 255; 0
+    Topic:
+      Value: /episode/reference_path
+      Depth: 1
+      Durability Policy: Transient Local
+      Reliability Policy: Reliable
+      History Policy: Keep Last
+  - Class: rviz_default_plugins/Path
     Name: Global plan
     Enabled: true
     Topic:

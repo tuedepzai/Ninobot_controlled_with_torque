@@ -1,5 +1,133 @@
 # Tạo bản đồ và điều hướng Nino (ROS 2 Jazzy)
 
+## Mặc định mới: giữ nguyên đường trong mỗi episode
+
+`navigation.launch.py` hiện mặc định `fixed_path:=true`. Khi nhận một đích:
+
+1. Gọi `ComputePathToPose` **một lần**, dùng planner `GridBased` hiện có.
+2. Lưu nguyên đường trả về và gửi một goal `FollowPath` cho DWB.
+3. Giữ đường gốc cho tới khi hoàn thành, thất bại hoặc bị hủy. Không retry,
+   recovery, tạo đường vòng hoặc lập đường lại trong episode.
+4. Nếu khoảng cách robot tới đường vượt `0.20 m`, hủy action và chặn vận tốc
+   về 0. Giữ trạng thái thất bại cho tới khi reset.
+
+**Giữ đường gốc không có nghĩa giữ nguyên hướng bánh.** Nếu robot bị lệch nhẹ,
+DWB vẫn điều khiển robot quay về đường cũ. Đường tham chiếu không bị bẻ cong
+để nối từ vị trí lệch đến đích. Đường tính ban đầu có thể cong do map và vật cản;
+chế độ này không ép planner tạo đường thẳng qua vật cản.
+
+Trong RViz, xem **Fixed reference path** (`/episode/reference_path`, màu xanh).
+Không dùng đường cục bộ của DWB để đánh giá xem đường gốc có bị thay đổi hay không.
+Đường gốc giữ nguyên tọa độ trong `map`; vị trí robot vẫn được AMCL cập nhật.
+
+Chạy mô phỏng như hướng dẫn bên dưới, sau đó trong terminal navigation:
+
+```bash
+cd /ros2_ws
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install --packages-select nino_navigation
+source install/setup.bash
+ros2 launch nino_navigation navigation.launch.py \
+  map:=/ros2_ws/maps/hall_01.yaml max_path_deviation:=0.20
+```
+
+Đặt **2D Pose Estimate**, chờ lidar khớp tường rồi gửi **2D Goal Pose**.
+Mỗi đích được chấp nhận là một episode. Đích mới khi đang chạy sẽ bị từ chối,
+thay vì tự đổi đường. Sau mỗi episode, reset trước khi gửi đích tiếp:
+
+```bash
+ros2 service call /episode/reset std_srvs/srv/Trigger '{}'
+```
+
+Reset chỉ xóa trạng thái episode; không dịch chuyển robot hay reset Gazebo.
+Reset bị từ chối nếu action cũ chưa kết thúc hoặc chưa xác nhận robot dừng.
+Hủy episode đang chạy:
+
+```bash
+ros2 service call /episode/cancel std_srvs/srv/Trigger '{}'
+```
+
+Xem trạng thái và độ lệch:
+
+```bash
+ros2 topic echo /episode/state --qos-durability transient_local
+ros2 topic echo /episode/path_deviation
+```
+
+Kiểm tra node đã sẵn sàng nhận đích (kể cả TF trong buffer của chính nó):
+
+```bash
+ros2 service call /episode/ready std_srvs/srv/Trigger '{}'
+```
+
+`/episode/state` chứa trạng thái, nguyên nhân, số yêu cầu lập đường và mã SHA256
+của đường gốc. Các tham số trong `config/episode.yaml` được đọc khi khởi động;
+khởi động lại launch để áp dụng thay đổi. `max_path_deviation` cũng có launch
+argument như ví dụ trên. Độ lệch là khoảng cách ngắn nhất từ vị trí robot tới
+các đoạn thẳng nối các điểm trên đường, tính trong `map`, kiểm tra ở 20 Hz.
+
+Chế độ này giữ AMCL, Navfn, DWB, velocity smoother và collision monitor.
+Không chạy BT navigator, behavior server, route server, docking server hay
+waypoint follower, nên không có nhánh tự tìm đường thay thế. Node
+`episode_manager` là nguồn `/cmd_vel` duy nhất; nó nhận lệnh đã qua collision
+monitor trên `/episode/cmd_vel_candidate`. Không chạy teleop, lệnh mô-men hoặc
+launch navigation khác đồng thời. Node từ chối bắt đầu nếu phát hiện nguồn
+`/cmd_vel` khác, nhưng đây không phải cơ chế khóa topic trước publisher bên ngoài.
+
+Khi thất bại/hủy: chặn lệnh khác 0 ngay, yêu cầu hủy action, tiếp tục phát vận
+tốc 0 và dùng `/odom` kiểm tra dừng. Nếu không xác nhận được dừng/action kết
+thúc trong 5 giây, báo thất bại và tiếp tục giữ lệnh 0. Watchdog và bộ điều
+khiển mô-men nền được giữ nguyên. Launch mô phỏng mặc định không bật phần bù
+RL; tích hợp SAC thử nghiệm và hướng dẫn riêng ở
+[`rl_training/README.md`](rl_training/README.md).
+
+Nếu cần kiểm tra lại Nav2 tiêu chuẩn có replanning, dùng riêng:
+
+```bash
+ros2 launch nino_navigation navigation.launch.py \
+  map:=/ros2_ws/maps/hall_01.yaml fixed_path:=false
+```
+
+### Giới hạn của phép đo
+
+- Bộ giám sát dùng vị trí **ước lượng từ AMCL/TF**, không dùng vị trí thật của
+  Gazebo. Nếu robot trượt nhưng AMCL chưa nhận ra, lỗi thật có thể lớn hơn lỗi
+  đang đo. AMCL cũng có thể làm lỗi nhảy khi định vị lại.
+- Xác nhận dừng dùng vận tốc encoder trong `/odom`, chưa chứng minh robot không
+  còn trượt ngang. Thử nghiệm robot thật cần bổ sung đánh giá độc lập.
+- Đường tự cắt/chạy gần nhau có thể làm phép tìm đoạn gần nhất nhận nhầm nhánh.
+- Chế độ này tính một đường mới ở đầu mỗi episode, không đảm bảo đường giữa các
+  episode giống nhau. Chưa hỗ trợ nhập quỹ đạo lưu sẵn.
+- `NavigateToPose.behavior_tree` phải để trống; không có BT chạy trong chế độ này.
+  Feedback `distance_remaining` là khoảng cách thẳng tới điểm cuối; thời gian
+  còn lại chưa được ước lượng.
+
+### Kiểm chứng chế độ đường cố định
+
+```bash
+colcon test --packages-select nino_control nino_navigation
+colcon test-result --verbose
+
+# Chỉ chạy khi không có Gazebo/Nav2 khác: script tự mở rồi đóng mô phỏng.
+python3 src/nino_navigation/test/verify_fixed_path.py
+python3 src/nino_navigation/test/verify_fixed_path.py --standard
+```
+
+Đã chạy 18 kiểm thử mới về khoảng cách, số yêu cầu action, giữ nguyên đường,
+thành công, lỗi controller, quá ngưỡng, hủy, nhận goal muộn, timeout và reset.
+`colcon test-result` báo 28 test entries, 0 lỗi, 0 thất bại (bao gồm test của
+`nino_control` và các mục tổng hợp của CTest).
+
+Kiểm chứng Gazebo/Nav2 ngày 24/10/2026: đích 1 m thành công với đường không đổi.
+Episode thứ hai dịch robot ngang và đặt lại AMCL tương ứng để tạo lỗi định vị
+đã biết; đo lệch `0.305 m > 0.200 m`, action thất bại, giữ nguyên đường và phát
+lệnh 0. Vận tốc odometry cuối khoảng `0.00101 m/s`, `-0.00050 rad/s`.
+Bằng chứng nằm ở `log/fixed_path_20261024_143945_228540/result.json` và log đi kèm.
+Thử chỉ dịch robot mà không đặt lại AMCL chưa làm bộ giám sát nhận ra đầy đủ độ
+lệch; do đó không coi thử nghiệm này là xác nhận phát hiện mọi kiểu trượt.
+Chế độ Nav2 cũ (`fixed_path:=false`) cũng đã chạy lại đích 1 m thành công;
+kết quả ở `log/fixed_path_20261024_144148_281026/result.json`.
+
 ## Hiểu luồng dữ liệu
 
 - **SLAM Toolbox** dùng lidar `/scan` và chuyển động đo từ encoder để vừa dựng

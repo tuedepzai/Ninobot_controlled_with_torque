@@ -1,0 +1,32 @@
+environment:
+  goal_x: 11.0
+  goal_y: 0.0
+  max_path_deviation: 0.20
+  residual_limit: 0.30
+  step_seconds: 0.10
+  max_episode_seconds: 90.0
+  sensor_timeout: 0.75
+  startup_timeout: 60.0
+  startup_progress_timeout: 15.0
+  startup_attempts: 3
+  headless: true
+reward:
+  progress: 20.0
+  cross_track: 8.0
+  heading: 0.5
+  vibration: 0.02
+  effort: 0.01
+  smoothness: 0.01
+  time: 0.05
+  success: 30.0
+  failure: -30.0
+sac:
+  learning_rate: 0.0003
+  buffer_size: 100000
+  learning_starts: 1000
+  batch_size: 256
+  gamma: 0.99
+  tau: 0.005
+  train_freq: 1
+  gradient_steps: 1
+  net_arch: [128, 128]

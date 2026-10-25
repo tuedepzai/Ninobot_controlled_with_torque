@@ -1,14 +1,17 @@
 """Closed-loop /cmd_vel to wheel-torque adapter for JointGroupEffortController."""
 
 from math import cos, isfinite, sin
+import json
+from time import monotonic
 
 import rclpy
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, String
+from nino_control.residual import ResidualGate
 from tf2_ros import TransformBroadcaster
 
 from nino_control.kinematics import (
@@ -48,6 +51,13 @@ class EffortDrive(Node):
         self.declare_parameter("odom_frame_id", "odom")
         self.declare_parameter("base_frame_id", "base_footprint")
         self.declare_parameter("publish_odom_tf", True)
+        self.declare_parameter("enable_residual", False)
+        self.declare_parameter("max_residual_torque", 0.3)
+        self.declare_parameter("residual_timeout", 0.2)
+        self.residual = ResidualGate(
+            enabled=bool(self.get_parameter("enable_residual").value),
+            limit=float(self.get_parameter("max_residual_torque").value),
+            timeout=float(self.get_parameter("residual_timeout").value))
 
         self.left_joint = str(self.get_parameter("left_wheel_joint").value)
         self.right_joint = str(self.get_parameter("right_wheel_joint").value)
@@ -111,6 +121,13 @@ class EffortDrive(Node):
         self.applied_torque_publisher = self.create_publisher(
             Float64MultiArray, "/wheel_torque_applied", 10
         )
+        self.base_torque_publisher = self.create_publisher(Float64MultiArray, "/wheel_torque_base", 10)
+        self.residual_publisher = self.create_publisher(Float64MultiArray, "/wheel_residual_applied", 10)
+        if self.residual.enabled:
+            self.create_subscription(Float64MultiArray, "/wheel_torque_residual",
+                                     self._residual_callback, 1)
+            self.create_subscription(String, "/episode/state", self._episode_callback,
+                                     QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.odom_publisher = self.create_publisher(
             Odometry, str(self.get_parameter("odom_topic").value), 10
         )
@@ -163,6 +180,17 @@ class EffortDrive(Node):
         self.requested_linear = float(message.linear.x)
         self.requested_angular = float(message.angular.z)
         self.last_cmd_ns = self.get_clock().now().nanoseconds
+        if abs(self.requested_linear) < 1e-9 and abs(self.requested_angular) < 1e-9:
+            self.residual.clear()
+
+    def _residual_callback(self, message):
+        self.residual.update(message.data, monotonic())
+
+    def _episode_callback(self, message):
+        try:
+            self.residual.set_following(json.loads(message.data).get('state') == 'FOLLOWING')
+        except (ValueError, AttributeError):
+            self.residual.set_following(False)
 
     def _torque_callback(self, message: Float64MultiArray) -> None:
         if len(message.data) != 2:
@@ -183,6 +211,7 @@ class EffortDrive(Node):
         self.requested_angular = 0.0
         self.target_velocity = [0.0, 0.0]
         self.error_integral = [0.0, 0.0]
+        self.residual.clear()
 
     def _joint_state_callback(self, message: JointState) -> None:
         velocity_by_name = dict(zip(message.name, message.velocity))
@@ -204,6 +233,7 @@ class EffortDrive(Node):
             self.last_torque_ns > 0
             and (now_ns - self.last_torque_ns) * 1.0e-9 <= self.torque_timeout
         )
+        base_efforts, residual_applied = [0.0, 0.0], [0.0, 0.0]
         if torque_override_active:
             efforts = list(self.override_torque)
         elif not self.have_wheel_state:
@@ -239,6 +269,11 @@ class EffortDrive(Node):
                 efforts.append(
                     clamp(effort, -self.max_velocity_torque, self.max_velocity_torque)
                 )
+            base_efforts = list(efforts)
+            efforts, residual_applied = self.residual.combine(
+                base_efforts, monotonic(),
+                moving=command_is_fresh and (abs(linear) > 1e-9 or abs(angular) > 1e-9),
+                total_limit=self.max_velocity_torque)
 
         efforts = limit_effort_commands(
             efforts,
@@ -257,6 +292,8 @@ class EffortDrive(Node):
         torque_status_period_ns = int(1.0e9 / self.torque_status_publish_rate)
         if now_ns - self.last_torque_status_publish_ns >= torque_status_period_ns:
             self.applied_torque_publisher.publish(command)
+            self.base_torque_publisher.publish(Float64MultiArray(data=base_efforts))
+            self.residual_publisher.publish(Float64MultiArray(data=residual_applied))
             self.last_torque_status_publish_ns = now_ns
 
         if self.have_wheel_state:

@@ -15,6 +15,18 @@ def launch_navigation(context):
     map_path = Path(LaunchConfiguration("map").perform(context)).expanduser().resolve()
     if not map_path.is_file():
         raise RuntimeError(f"Saved map YAML does not exist: {map_path}")
+    if LaunchConfiguration("fixed_path").perform(context).lower() == "true":
+        return [IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(PathJoinSubstitution([
+                FindPackageShare("nino_navigation"), "launch", "fixed_path.launch.py"
+            ])),
+            launch_arguments={
+                "map": str(map_path),
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
+                "params_file": LaunchConfiguration("params_file"),
+                "max_path_deviation": LaunchConfiguration("max_path_deviation"),
+            }.items(),
+        )]
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
             FindPackageShare("nav2_bringup"), "launch", "bringup_launch.py"
@@ -36,6 +48,10 @@ def generate_launch_description():
         DeclareLaunchArgument("map", description="Path to a saved map YAML"),
         DeclareLaunchArgument("use_sim_time", default_value="true"),
         DeclareLaunchArgument("rviz", default_value="true"),
+        DeclareLaunchArgument("fixed_path", default_value="true",
+                              choices=["true", "false"],
+                              description="Plan once per episode; false restores standard Nav2 replanning"),
+        DeclareLaunchArgument("max_path_deviation", default_value="0.20"),
         DeclareLaunchArgument("params_file", default_value=PathJoinSubstitution([
             share, "config", "nav2.yaml"
         ])),
